@@ -1,0 +1,148 @@
+{
+  "al_instance_id": 1,
+  "workshop_folder": "workshop",
+  "model_name": "logistic regression",
+  "query_strategy": "Workshop",
+  "labeler_user_id": "84d59ab6-75a2-4dd3-9838-0eac8d242eb2",
+  "labeler_username": "rok",
+  "created_at": "2026-07-23 05:48:21.005071",
+  "label_decisions_stats": {
+    "n_total": 11,
+    "n_with_model_prediction": 11,
+    "n_with_ground_truth": 11,
+    "n_latency_used": 11,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 487746.18,
+    "model_labeler_agreement_pct": 90.91,
+    "model_gt_agreement_pct": 27.27,
+    "labeler_gt_agreement_pct": 27.27
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 10,
+      "total": 11
+    },
+    "model_gt": {
+      "match": 3,
+      "total": 11
+    },
+    "labeler_gt": {
+      "match": 3,
+      "total": 11
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.45397786590899936,
+      "accuracy": 0.48936170212765956,
+      "precision_macro": 0.5123878490790256,
+      "recall_macro": 0.5977540416572675,
+      "created_at": "2026-07-23 05:48:22.510633"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.4598881738918416,
+      "accuracy": 0.49361702127659574,
+      "precision_macro": 0.5169035947712418,
+      "recall_macro": 0.6077540416572674,
+      "created_at": "2026-07-23 05:49:56.742481"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.46340510261915563,
+      "accuracy": 0.49361702127659574,
+      "precision_macro": 0.538640873015873,
+      "recall_macro": 0.584378886208911,
+      "created_at": "2026-07-23 05:54:54.441380"
+    },
+    {
+      "iteration_id": 4,
+      "num_labeled": 58,
+      "f1_score": 0.47141001905649027,
+      "accuracy": 0.49361702127659574,
+      "precision_macro": 0.5709688391673686,
+      "recall_macro": 0.5828995962680825,
+      "created_at": "2026-07-23 05:55:19.284863"
+    },
+    {
+      "iteration_id": 5,
+      "num_labeled": 59,
+      "f1_score": 0.4650604078660303,
+      "accuracy": 0.4808510638297872,
+      "precision_macro": 0.5716857148842442,
+      "recall_macro": 0.5540534424219288,
+      "created_at": "2026-07-23 05:56:22.742538"
+    },
+    {
+      "iteration_id": 6,
+      "num_labeled": 60,
+      "f1_score": 0.47144818529413496,
+      "accuracy": 0.4808510638297872,
+      "precision_macro": 0.5908656090641384,
+      "recall_macro": 0.5540534424219288,
+      "created_at": "2026-07-23 05:56:48.864688"
+    },
+    {
+      "iteration_id": 7,
+      "num_labeled": 61,
+      "f1_score": 0.47144818529413496,
+      "accuracy": 0.4808510638297872,
+      "precision_macro": 0.5908656090641384,
+      "recall_macro": 0.5540534424219288,
+      "created_at": "2026-07-23 05:57:14.032860"
+    },
+    {
+      "iteration_id": 8,
+      "num_labeled": 62,
+      "f1_score": 0.43326761586356555,
+      "accuracy": 0.4,
+      "precision_macro": 0.5660460998696293,
+      "recall_macro": 0.5378141261826125,
+      "created_at": "2026-07-23 05:57:33.711983"
+    },
+    {
+      "iteration_id": 9,
+      "num_labeled": 63,
+      "f1_score": 0.43326761586356555,
+      "accuracy": 0.4,
+      "precision_macro": 0.5660460998696293,
+      "recall_macro": 0.5378141261826125,
+      "created_at": "2026-07-23 05:58:03.528104"
+    },
+    {
+      "iteration_id": 10,
+      "num_labeled": 64,
+      "f1_score": 0.43326761586356555,
+      "accuracy": 0.4,
+      "precision_macro": 0.5660460998696293,
+      "recall_macro": 0.5378141261826125,
+      "created_at": "2026-07-23 05:58:13.631507"
+    },
+    {
+      "iteration_id": 11,
+      "num_labeled": 65,
+      "f1_score": 0.42544860988279487,
+      "accuracy": 0.37872340425531914,
+      "precision_macro": 0.5620194552179846,
+      "recall_macro": 0.5335406219091082,
+      "created_at": "2026-07-23 06:00:33.487980"
+    },
+    {
+      "iteration_id": 12,
+      "num_labeled": 66,
+      "f1_score": 0.4519503708518216,
+      "accuracy": 0.451063829787234,
+      "precision_macro": 0.5726147985719486,
+      "recall_macro": 0.5174115896510437,
+      "created_at": "2026-07-23 06:04:16.742437"
+    }
+  ]
+}

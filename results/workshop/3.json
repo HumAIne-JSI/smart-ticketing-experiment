@@ -1,0 +1,58 @@
+{
+  "al_instance_id": 3,
+  "workshop_folder": "workshop",
+  "model_name": "svm",
+  "query_strategy": "uncertainty sampling least confidence",
+  "labeler_user_id": "84d59ab6-75a2-4dd3-9838-0eac8d242eb2",
+  "labeler_username": "rok",
+  "created_at": "2026-07-23 08:18:13.263232",
+  "label_decisions_stats": {
+    "n_total": 1,
+    "n_with_model_prediction": 1,
+    "n_with_ground_truth": 1,
+    "n_latency_used": 1,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 171483,
+    "model_labeler_agreement_pct": 100.0,
+    "model_gt_agreement_pct": 100.0,
+    "labeler_gt_agreement_pct": 100.0
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 1,
+      "total": 1
+    },
+    "model_gt": {
+      "match": 1,
+      "total": 1
+    },
+    "labeler_gt": {
+      "match": 1,
+      "total": 1
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.006710526315789473,
+      "accuracy": 0.00851063829787234,
+      "precision_macro": 0.042666666666666665,
+      "recall_macro": 0.01129032258064516,
+      "created_at": "2026-07-23 08:18:15.008935"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.04303030303030303,
+      "accuracy": 0.02553191489361702,
+      "precision_macro": 0.03833333333333334,
+      "recall_macro": 0.05,
+      "created_at": "2026-07-23 08:22:49.334576"
+    }
+  ]
+}

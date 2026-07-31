@@ -1,0 +1,67 @@
+{
+  "al_instance_id": 6,
+  "workshop_folder": "workshop",
+  "model_name": "svm",
+  "query_strategy": "uncertainty sampling least confidence",
+  "labeler_user_id": "f2c5e8b9-b6e0-43b6-9fcf-90d35a1f7726",
+  "labeler_username": "ddardanis",
+  "created_at": "2026-07-23 13:48:28.639993",
+  "label_decisions_stats": {
+    "n_total": 3,
+    "n_with_model_prediction": 3,
+    "n_with_ground_truth": 3,
+    "n_latency_used": 2,
+    "n_latency_excluded_zero": 1,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 47250,
+    "model_labeler_agreement_pct": 66.67,
+    "model_gt_agreement_pct": 66.67,
+    "labeler_gt_agreement_pct": 33.33
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 2,
+      "total": 3
+    },
+    "model_gt": {
+      "match": 2,
+      "total": 3
+    },
+    "labeler_gt": {
+      "match": 1,
+      "total": 3
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.006710526315789473,
+      "accuracy": 0.00851063829787234,
+      "precision_macro": 0.042666666666666665,
+      "recall_macro": 0.01129032258064516,
+      "created_at": "2026-07-23 13:48:30.374027"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.0044444444444444444,
+      "accuracy": 0.00851063829787234,
+      "precision_macro": 0.016,
+      "recall_macro": 0.0025806451612903226,
+      "created_at": "2026-07-23 13:49:48.196080"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.038863636363636364,
+      "accuracy": 0.02553191489361702,
+      "precision_macro": 0.07333333333333333,
+      "recall_macro": 0.04129032258064516,
+      "created_at": "2026-07-23 13:58:08.023395"
+    }
+  ]
+}

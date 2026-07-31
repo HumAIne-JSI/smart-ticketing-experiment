@@ -1,0 +1,112 @@
+{
+  "al_instance_id": 7,
+  "workshop_folder": "workshop",
+  "model_name": "logistic regression",
+  "query_strategy": "uncertainty sampling least confidence",
+  "labeler_user_id": "a578a923-201e-4feb-b3ef-245e2d4f5768",
+  "labeler_username": "alberto.marchinelli@gmail.com",
+  "created_at": "2026-07-23 13:50:58.183016",
+  "label_decisions_stats": {
+    "n_total": 8,
+    "n_with_model_prediction": 8,
+    "n_with_ground_truth": 8,
+    "n_latency_used": 8,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 80024.88,
+    "model_labeler_agreement_pct": 50.0,
+    "model_gt_agreement_pct": 12.5,
+    "labeler_gt_agreement_pct": 25.0
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 4,
+      "total": 8
+    },
+    "model_gt": {
+      "match": 1,
+      "total": 8
+    },
+    "labeler_gt": {
+      "match": 2,
+      "total": 8
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.45397786590899936,
+      "accuracy": 0.48936170212765956,
+      "precision_macro": 0.5123878490790256,
+      "recall_macro": 0.5977540416572675,
+      "created_at": "2026-07-23 13:51:00.000275"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.4906473721997023,
+      "accuracy": 0.4978723404255319,
+      "precision_macro": 0.5925628636069813,
+      "recall_macro": 0.626215580118806,
+      "created_at": "2026-07-23 13:51:51.133492"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.5502331252000894,
+      "accuracy": 0.6212765957446809,
+      "precision_macro": 0.6502677404295051,
+      "recall_macro": 0.6636349349575156,
+      "created_at": "2026-07-23 13:55:55.691365"
+    },
+    {
+      "iteration_id": 4,
+      "num_labeled": 58,
+      "f1_score": 0.5425944621467922,
+      "accuracy": 0.6212765957446809,
+      "precision_macro": 0.6374049953314659,
+      "recall_macro": 0.6636349349575156,
+      "created_at": "2026-07-23 13:56:29.745908"
+    },
+    {
+      "iteration_id": 5,
+      "num_labeled": 59,
+      "f1_score": 0.5513972439294081,
+      "accuracy": 0.6212765957446809,
+      "precision_macro": 0.6526621381886087,
+      "recall_macro": 0.6636349349575156,
+      "created_at": "2026-07-23 13:57:01.473623"
+    },
+    {
+      "iteration_id": 6,
+      "num_labeled": 60,
+      "f1_score": 0.5537144638274292,
+      "accuracy": 0.6127659574468085,
+      "precision_macro": 0.6615182926829268,
+      "recall_macro": 0.6605580118805925,
+      "created_at": "2026-07-23 13:57:30.134738"
+    },
+    {
+      "iteration_id": 7,
+      "num_labeled": 61,
+      "f1_score": 0.5528255749385402,
+      "accuracy": 0.6085106382978723,
+      "precision_macro": 0.6784772253491766,
+      "recall_macro": 0.6538913452139258,
+      "created_at": "2026-07-23 13:57:59.792281"
+    },
+    {
+      "iteration_id": 8,
+      "num_labeled": 62,
+      "f1_score": 0.561558619671585,
+      "accuracy": 0.6127659574468085,
+      "precision_macro": 0.6785747863247863,
+      "recall_macro": 0.6605580118805925,
+      "created_at": "2026-07-23 13:58:22.500160"
+    }
+  ]
+}

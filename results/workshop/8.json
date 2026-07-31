@@ -1,0 +1,85 @@
+{
+  "al_instance_id": 8,
+  "workshop_folder": "workshop",
+  "model_name": "random forest",
+  "query_strategy": "Workshop",
+  "labeler_user_id": "fcd3d390-dcbc-4e59-bee2-23777e924f2e",
+  "labeler_username": "roberto.costa@gft.com",
+  "created_at": "2026-07-23 14:04:21.217607",
+  "label_decisions_stats": {
+    "n_total": 4,
+    "n_with_model_prediction": 4,
+    "n_with_ground_truth": 4,
+    "n_latency_used": 4,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 139069.25,
+    "model_labeler_agreement_pct": 50.0,
+    "model_gt_agreement_pct": 0.0,
+    "labeler_gt_agreement_pct": 0.0
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 2,
+      "total": 4
+    },
+    "model_gt": {
+      "match": 0,
+      "total": 4
+    },
+    "labeler_gt": {
+      "match": 0,
+      "total": 4
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.26033768517331607,
+      "accuracy": 0.3021276595744681,
+      "precision_macro": 0.29419280632730926,
+      "recall_macro": 0.4096342062291882,
+      "created_at": "2026-07-23 14:04:24.059141"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.2405998133324496,
+      "accuracy": 0.30638297872340425,
+      "precision_macro": 0.266339479234216,
+      "recall_macro": 0.39257671002832295,
+      "created_at": "2026-07-23 14:06:15.014557"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.2927111173311621,
+      "accuracy": 0.3617021276595745,
+      "precision_macro": 0.3037530659580706,
+      "recall_macro": 0.4452386529929955,
+      "created_at": "2026-07-23 14:08:09.995596"
+    },
+    {
+      "iteration_id": 4,
+      "num_labeled": 58,
+      "f1_score": 0.2861474973827915,
+      "accuracy": 0.35319148936170214,
+      "precision_macro": 0.3241168218754426,
+      "recall_macro": 0.4420589016718049,
+      "created_at": "2026-07-23 14:08:53.123380"
+    },
+    {
+      "iteration_id": 5,
+      "num_labeled": 59,
+      "f1_score": 0.3132431001800874,
+      "accuracy": 0.34893617021276596,
+      "precision_macro": 0.37579584017515055,
+      "recall_macro": 0.4892246785472592,
+      "created_at": "2026-07-23 14:09:45.606326"
+    }
+  ]
+}

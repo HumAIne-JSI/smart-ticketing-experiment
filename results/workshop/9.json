@@ -1,0 +1,103 @@
+{
+  "al_instance_id": 9,
+  "workshop_folder": "workshop",
+  "model_name": "random forest",
+  "query_strategy": "CLUE",
+  "labeler_user_id": "6270967e-e096-4327-8c73-7fbf4ef988ac",
+  "labeler_username": "fise@gft.com",
+  "created_at": "2026-07-23 14:12:00.242455",
+  "label_decisions_stats": {
+    "n_total": 6,
+    "n_with_model_prediction": 6,
+    "n_with_ground_truth": 6,
+    "n_latency_used": 6,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 71416,
+    "model_labeler_agreement_pct": 100.0,
+    "model_gt_agreement_pct": 66.67,
+    "labeler_gt_agreement_pct": 66.67
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 6,
+      "total": 6
+    },
+    "model_gt": {
+      "match": 4,
+      "total": 6
+    },
+    "labeler_gt": {
+      "match": 4,
+      "total": 6
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.26033768517331607,
+      "accuracy": 0.3021276595744681,
+      "precision_macro": 0.29419280632730926,
+      "recall_macro": 0.4096342062291882,
+      "created_at": "2026-07-23 14:12:02.488426"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.26132040642296356,
+      "accuracy": 0.30638297872340425,
+      "precision_macro": 0.30272309477717446,
+      "recall_macro": 0.40579745158598207,
+      "created_at": "2026-07-23 14:13:36.444683"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.26014155991854554,
+      "accuracy": 0.3276595744680851,
+      "precision_macro": 0.25513306138306135,
+      "recall_macro": 0.3818563570424613,
+      "created_at": "2026-07-23 14:13:55.841817"
+    },
+    {
+      "iteration_id": 4,
+      "num_labeled": 58,
+      "f1_score": 0.23105883479285017,
+      "accuracy": 0.3191489361702128,
+      "precision_macro": 0.23218067218067215,
+      "recall_macro": 0.4044562247788054,
+      "created_at": "2026-07-23 14:14:49.096174"
+    },
+    {
+      "iteration_id": 5,
+      "num_labeled": 59,
+      "f1_score": 0.2129101818717918,
+      "accuracy": 0.3021276595744681,
+      "precision_macro": 0.21329964671343984,
+      "recall_macro": 0.33622578138707176,
+      "created_at": "2026-07-23 14:15:05.746036"
+    },
+    {
+      "iteration_id": 6,
+      "num_labeled": 60,
+      "f1_score": 0.2554092476380295,
+      "accuracy": 0.34893617021276596,
+      "precision_macro": 0.27138439046333784,
+      "recall_macro": 0.4068314371043899,
+      "created_at": "2026-07-23 14:16:09.223886"
+    },
+    {
+      "iteration_id": 7,
+      "num_labeled": 61,
+      "f1_score": 0.28145469377543675,
+      "accuracy": 0.3021276595744681,
+      "precision_macro": 0.3187298811416458,
+      "recall_macro": 0.42154279770408803,
+      "created_at": "2026-07-23 14:17:03.438764"
+    }
+  ]
+}

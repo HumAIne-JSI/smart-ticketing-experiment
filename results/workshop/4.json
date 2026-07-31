@@ -1,0 +1,49 @@
+{
+  "al_instance_id": 4,
+  "workshop_folder": "workshop",
+  "model_name": "logistic regression",
+  "query_strategy": "uncertainty sampling entropy",
+  "labeler_user_id": "84d59ab6-75a2-4dd3-9838-0eac8d242eb2",
+  "labeler_username": "rok",
+  "created_at": "2026-07-23 08:23:47.155609",
+  "label_decisions_stats": {
+    "n_total": 0,
+    "n_with_model_prediction": 0,
+    "n_with_ground_truth": 0,
+    "n_latency_used": 0,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": null,
+    "model_labeler_agreement_pct": null,
+    "model_gt_agreement_pct": null,
+    "labeler_gt_agreement_pct": null
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 0,
+      "total": 0
+    },
+    "model_gt": {
+      "match": 0,
+      "total": 0
+    },
+    "labeler_gt": {
+      "match": 0,
+      "total": 0
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.45397786590899936,
+      "accuracy": 0.48936170212765956,
+      "precision_macro": 0.5123878490790256,
+      "recall_macro": 0.5977540416572675,
+      "created_at": "2026-07-23 08:23:49.070415"
+    }
+  ]
+}

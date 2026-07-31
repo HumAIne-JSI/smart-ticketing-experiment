@@ -1,0 +1,67 @@
+{
+  "al_instance_id": 5,
+  "workshop_folder": "workshop",
+  "model_name": "logistic regression",
+  "query_strategy": "Workshop",
+  "labeler_user_id": "dac901c1-9bf8-4252-bdc4-9f4d4318843b",
+  "labeler_username": "fpdo@gft.com",
+  "created_at": "2026-07-23 13:38:45.582978",
+  "label_decisions_stats": {
+    "n_total": 2,
+    "n_with_model_prediction": 2,
+    "n_with_ground_truth": 2,
+    "n_latency_used": 2,
+    "n_latency_excluded_zero": 0,
+    "n_skipped_for_training": 0,
+    "n_skipped_null_model": 0
+  },
+  "computed_metrics": {
+    "average_latency_ms": 137445,
+    "model_labeler_agreement_pct": 50.0,
+    "model_gt_agreement_pct": 0.0,
+    "labeler_gt_agreement_pct": 0.0
+  },
+  "agreement_counts": {
+    "model_labeler": {
+      "match": 1,
+      "total": 2
+    },
+    "model_gt": {
+      "match": 0,
+      "total": 2
+    },
+    "labeler_gt": {
+      "match": 0,
+      "total": 2
+    }
+  },
+  "macro_f1_by_iteration": [
+    {
+      "iteration_id": 1,
+      "num_labeled": 55,
+      "f1_score": 0.45397786590899936,
+      "accuracy": 0.48936170212765956,
+      "precision_macro": 0.5123878490790256,
+      "recall_macro": 0.5977540416572675,
+      "created_at": "2026-07-23 13:38:47.456518"
+    },
+    {
+      "iteration_id": 2,
+      "num_labeled": 56,
+      "f1_score": 0.4598881738918416,
+      "accuracy": 0.49361702127659574,
+      "precision_macro": 0.5169035947712418,
+      "recall_macro": 0.6077540416572674,
+      "created_at": "2026-07-23 13:41:15.802988"
+    },
+    {
+      "iteration_id": 3,
+      "num_labeled": 57,
+      "f1_score": 0.4874874806007863,
+      "accuracy": 0.49361702127659574,
+      "precision_macro": 0.5778474195738902,
+      "recall_macro": 0.6095489134521392,
+      "created_at": "2026-07-23 13:41:45.116317"
+    }
+  ]
+}
