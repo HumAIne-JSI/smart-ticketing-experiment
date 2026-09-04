@@ -3,11 +3,13 @@ import json
 import glob
 import os
 import statistics
+from datetime import datetime
 
 BASE_DIR = r"C:\Users\rokkl\Desktop\IJS\smart_ticketing_experiment"
-DB_DIR = os.path.join(BASE_DIR, "database", "workshop")
+EXPERIMENT = "experiment"
+DB_DIR = os.path.join(BASE_DIR, "database", EXPERIMENT)
 INSTANCES_DIR = os.path.join(DB_DIR, "instances")
-OUTPUT_DIR = os.path.join(BASE_DIR, "results", "workshop")
+OUTPUT_DIR = os.path.join(BASE_DIR, "results", EXPERIMENT)
 EXCEL_PATH = os.path.join(BASE_DIR, "data", "User Request_last_team_ANON.xlsx")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -52,7 +54,7 @@ for inst_id in instance_ids:
     # -- Build result --
     result = {
         "al_instance_id": inst_id,
-        "workshop_folder": "workshop",
+        "experiment": EXPERIMENT,
         "model_name": inst_info.get("model_name"),
         "query_strategy": inst_info.get("query_strategy"),
         "labeler_user_id": inst_info.get("user_id"),
@@ -141,6 +143,35 @@ for inst_id in instance_ids:
             "labeler_gt": {"match": lab_gt_match, "total": lab_gt_total},
         }
 
+    # Self-reported button metrics (difficult / i_dont_know / im_tired)
+    n_decisions = len(label_decisions)
+    n_difficult = sum(1 for d in label_decisions if d.get("is_difficult") is True)
+    n_i_dont_know = sum(1 for d in label_decisions if d.get("i_dont_know") is True)
+    difficult_pct = round(100.0 * n_difficult / n_decisions, 2) if n_decisions else None
+    i_dont_know_pct = round(100.0 * n_i_dont_know / n_decisions, 2) if n_decisions else None
+
+    tired = [d for d in label_decisions if d.get("is_tired") is True]
+    im_tired_pressed = len(tired) > 0
+    im_tired_label_order = None
+    im_tired_elapsed_s = None
+    if im_tired_pressed:
+        labeled = [(d, d["labeled_at"]) for d in label_decisions if d.get("labeled_at")]
+        first_ts = datetime.fromisoformat(min(ts for _, ts in labeled))
+        chosen = min(tired, key=lambda d: d["labeled_at"])
+        order = sorted(label_decisions, key=lambda d: d.get("labeled_at") or "")
+        im_tired_label_order = next(i for i, d in enumerate(order) if d is chosen) + 1
+        im_tired_elapsed_s = round((datetime.fromisoformat(chosen["labeled_at"]) - first_ts).total_seconds(), 2)
+
+    result["self_reported_buttons"] = {
+        "n_difficult": n_difficult,
+        "n_i_dont_know": n_i_dont_know,
+        "difficult_pct": difficult_pct,
+        "i_dont_know_pct": i_dont_know_pct,
+        "im_tired_pressed": im_tired_pressed,
+        "im_tired_label_order": im_tired_label_order,
+        "im_tired_elapsed_s": im_tired_elapsed_s,
+    }
+
     # Macro F1 from metrics.json (return as-is per iteration)
     macro_f1_list = []
     for m in metrics_list:
@@ -174,7 +205,9 @@ for inst_id in instance_ids:
         f"mod/GT={m['model_gt_agreement_pct'] or 'N/A':>6}  "
         f"lab/GT={m['labeler_gt_agreement_pct'] or 'N/A':>6}  "
         f"f1_iters={len(f1s)}  "
-        f"f1_final={f1s[-1] if f1s else 'N/A':.4f}"
+        f"f1_final={f1s[-1] if f1s else 'N/A':.4f}  "
+        f"difficult={n_difficult}  dont_know={n_i_dont_know}  "
+        f"tired={'#{}'.format(im_tired_label_order) if im_tired_label_order else '-'}"
     )
 
 print(f"\nOutput files in: {OUTPUT_DIR}/")
