@@ -1,7 +1,7 @@
 """Run the labeling eval against the HumAL API.
 
 Two parts share one loop: control (no AI help) and treatment (with AI help).
-Labels are chosen at random until the LLM part is added.
+Labels are chosen by the pluggable labeler (LABELER): random or model_accept; an LLM labeler comes later.
 
 Usage:
     uv run python scripts/api_eval.py --mode control|treatment|both
@@ -23,6 +23,7 @@ N_TICKETS = 10
 MODEL_NAME = "logistic regression"
 QS_STRATEGIES = ["Experiment 1", "Experiment 2"]
 RUN_OUTPUT_DIR = Path("runs/api_eval")
+LABELER = "random"
 
 
 class Client:
@@ -75,7 +76,33 @@ def extract_instance_id(resp):
     raise RuntimeError(f"Cannot find instance id in response: {json.dumps(resp)[:300]}")
 
 
-def run(client, mode, qs, n_tickets, teams):
+def rank_predictions(proba):
+    return sorted(
+        zip(proba["classes"], proba["probabilities"][0]),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+
+
+class RandomLabeler:
+    def label_ticket(self, ticket, assistance_bundle, teams):
+        return {"label": random.choice(teams), "difficult": None, "dont_know": None, "raw": None}
+
+
+class ModelAcceptLabeler:
+    def label_ticket(self, ticket, assistance_bundle, teams):
+        return {
+            "label": rank_predictions(assistance_bundle["infer_proba"])[0][0],
+            "difficult": None,
+            "dont_know": None,
+            "raw": None,
+        }
+
+
+LABELERS = {"random": RandomLabeler, "model_accept": ModelAcceptLabeler}
+
+
+def run(client, mode, qs, n_tickets, teams, labeler):
     resp = client.call(
         "POST",
         "/activelearning/new",
@@ -100,11 +127,7 @@ def run(client, mode, qs, n_tickets, teams):
             proba = client.call(
                 "POST", f"/activelearning/{instance_id}/infer_proba?query_idx={ref}"
             )
-            ranked = sorted(
-                zip(proba["classes"], proba["probabilities"][0]),
-                key=lambda pair: pair[1],
-                reverse=True,
-            )
+            ranked = rank_predictions(proba)
             model_prediction, second_model_prediction = ranked[0][0], ranked[1][0]
             bundle = {
                 "infer_proba": proba,
@@ -116,7 +139,8 @@ def run(client, mode, qs, n_tickets, teams):
                 ),
             }
 
-        label = random.choice(teams)
+        decision = labeler.label_ticket(ticket, bundle, teams)
+        label = decision["label"]
         end = datetime.now()
         info = {
             "ticket_id": ref,
@@ -127,8 +151,8 @@ def run(client, mode, qs, n_tickets, teams):
             "end_time": end.isoformat(),
             "most_helpful_feature": None,
             "is_tired": None,
-            "is_difficult": None,
-            "i_dont_know": None,
+            "is_difficult": decision["difficult"],
+            "i_dont_know": decision["dont_know"],
         }
         client.call(
             "POST", f"/activelearning/{instance_id}/label-with-info", json=[info]
@@ -173,14 +197,19 @@ def main():
     args = parser.parse_args()
 
     n_tickets = args.n_tickets if args.n_tickets is not None else N_TICKETS
+    labeler = LABELERS[LABELER]()
     client = Client()
     client.login()
     teams = client.call("GET", "/data/teams")["teams"]
 
     modes = ["control", "treatment"] if args.mode == "both" else [args.mode]
+    if LABELER == "model_accept" and "control" in modes:
+        raise SystemExit(
+            "model_accept labeler requires treatment mode (no model prediction in control)"
+        )
     for mode in modes:
         idx = 0 if mode == "control" else min(1, len(QS_STRATEGIES) - 1)
-        records = run(client, mode, QS_STRATEGIES[idx], n_tickets, teams)
+        records = run(client, mode, QS_STRATEGIES[idx], n_tickets, teams, labeler)
         save_run(mode, QS_STRATEGIES[idx], records)
 
 
