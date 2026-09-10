@@ -17,4 +17,6 @@ build/
 /data/
 /organisation/
 /runs/
+/.env
 /results/
+/.env

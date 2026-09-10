@@ -1,20 +1,36 @@
 """Run the labeling eval against the HumAL API.
 
 Two parts share one loop: control (no AI help) and treatment (with AI help).
-Labels are chosen by the pluggable labeler (LABELER): random or model_accept; an LLM labeler comes later.
+Labels are chosen by the pluggable labeler (LABELER): random, model_accept or llm.
 
 Usage:
     uv run python scripts/api_eval.py --mode control|treatment|both
+
+After a successful run, export-all is extracted to database/llm_experiment/export_all_<ts>
+and the instances created by the run are deleted (SAVE_EXPORT / DELETE_INSTANCE flags).
 """
 
 import argparse
+import io
 import json
+import os
 import random
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
 import requests
+from openai import OpenAI
+
+from llm_labeling import (
+    OPENROUTER_BASE_URL,
+    ask_llm,
+    load_cache,
+    load_env,
+    load_persona,
+    save_cache,
+)
 
 BASE_URL = "http://localhost:8000"
 USERNAME = "test"
@@ -23,7 +39,12 @@ N_TICKETS = 10
 MODEL_NAME = "logistic regression"
 QS_STRATEGIES = ["Experiment 1", "Experiment 2"]
 RUN_OUTPUT_DIR = Path("runs/api_eval")
+EXPORT_DIR = Path("database/llm_experiment")
+SAVE_EXPORT = True
+DELETE_INSTANCE = True
 LABELER = "random"
+LLM_MODEL = "openai/gpt-5.6-luna"
+PERSONA = "junior"
 
 
 class Client:
@@ -42,7 +63,7 @@ class Client:
             raise RuntimeError(f"Login failed -> {r.status_code}: {r.text[:200]}")
         self.session.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
 
-    def call(self, method, path, **kwargs):
+    def _request_with_retries(self, method, path, **kwargs):
         url = f"{self.base}{path}"
         last_exc = None
         for attempt in range(3):
@@ -63,7 +84,13 @@ class Client:
             raise RuntimeError(f"{method} {url} failed after retries: {last_exc}")
         if r.status_code >= 400:
             raise RuntimeError(f"{method} {url} -> {r.status_code}: {r.text[:300]}")
-        return r.json()
+        return r
+
+    def call(self, method, path, **kwargs):
+        return self._request_with_retries(method, path, **kwargs).json()
+
+    def call_raw(self, method, path, **kwargs):
+        return self._request_with_retries(method, path, **kwargs).content
 
 
 def extract_instance_id(resp):
@@ -99,7 +126,37 @@ class ModelAcceptLabeler:
         }
 
 
-LABELERS = {"random": RandomLabeler, "model_accept": ModelAcceptLabeler}
+class LLMLabeler:
+    def __init__(self):
+        load_env()
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise SystemExit("Set OPENROUTER_API_KEY (env var or .env).")
+        self.client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=key)
+        self.model = LLM_MODEL
+        self.persona_text = load_persona(PERSONA)
+        self.cache = load_cache()
+        self.cache_hits = 0
+
+    def label_ticket(self, ticket, assistance_bundle, teams):
+        decision, out = ask_llm(
+            self.client, self.model, teams, ticket, assistance_bundle,
+            persona_text=self.persona_text, cache=self.cache,
+        )
+        save_cache(self.cache)
+        self.cache_hits += int(out["cached"])
+        if decision is None:
+            raise RuntimeError(f"LLM returned invalid team twice: {out['raw'][:200]}")
+        return {
+            **decision,
+            "raw": out["raw"],
+            "usage": out["usage"],
+            "latency_ms": out["latency_ms"],
+            "cached": out["cached"],
+        }
+
+
+LABELERS = {"random": RandomLabeler, "model_accept": ModelAcceptLabeler, "llm": LLMLabeler}
 
 
 def run(client, mode, qs, n_tickets, teams, labeler):
@@ -170,9 +227,31 @@ def run(client, mode, qs, n_tickets, teams, labeler):
                 "second_model_prediction": second_model_prediction,
                 "start_time": start.isoformat(),
                 "end_time": end.isoformat(),
+                "decision": decision,
             }
         )
-    return records
+    return records, instance_id
+
+
+def export_and_cleanup(client, created_ids):
+    if SAVE_EXPORT:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = EXPORT_DIR / f"export_all_{ts}"
+        data = client.call_raw("GET", "/activelearning/export-all")
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        target.mkdir(parents=True, exist_ok=True)
+        zf.extractall(target)
+        print(f"export extracted to {target} ({len(zf.namelist())} files)")
+    if not DELETE_INSTANCE:
+        return
+    if not SAVE_EXPORT:
+        raise SystemExit("DELETE_INSTANCE requires SAVE_EXPORT (deleting without export loses data).")
+    for instance_id in created_ids:
+        try:
+            client.call("DELETE", f"/activelearning/{instance_id}")
+            print(f"instance {instance_id} deleted")
+        except RuntimeError as exc:
+            print(f"instance {instance_id} delete failed: {exc}")
 
 
 def save_run(mode, qs, records):
@@ -184,6 +263,8 @@ def save_run(mode, qs, records):
         "mode": mode,
         "model_name": MODEL_NAME,
         "qs_strategy": qs,
+        "labeler": LABELER,
+        "persona": PERSONA,
         "records": records,
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -207,10 +288,15 @@ def main():
         raise SystemExit(
             "model_accept labeler requires treatment mode (no model prediction in control)"
         )
+    created_ids = []
     for mode in modes:
         idx = 0 if mode == "control" else min(1, len(QS_STRATEGIES) - 1)
-        records = run(client, mode, QS_STRATEGIES[idx], n_tickets, teams, labeler)
+        records, instance_id = run(client, mode, QS_STRATEGIES[idx], n_tickets, teams, labeler)
         save_run(mode, QS_STRATEGIES[idx], records)
+        created_ids.append(instance_id)
+    if getattr(labeler, "cache", None) is not None:
+        print(f"LLM cache: {labeler.cache_hits} hits")
+    export_and_cleanup(client, created_ids)
 
 
 if __name__ == "__main__":
