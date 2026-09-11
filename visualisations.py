@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 RESULTS_DIR = Path(__file__).resolve().parent / "results" / "experiment"
 OUTPUT_PATH = RESULTS_DIR / "condition_comparison.png"
 
-CONTROL_SESSION_IDS = [4, 7, 9]
-TREATMENT_SESSION_IDS = [5, 6, 8]
+CONTROL_SESSION_IDS = [4, 7, 9, 16, 17, 21, 32, 33, 36]
+TREATMENT_SESSION_IDS = [5, 6, 8, 15, 18, 22, 31, 35]
 
 CONTROL_LABEL = "No AI assistance"
 TREATMENT_LABEL = "With AI assistance"

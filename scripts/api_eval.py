@@ -1,6 +1,7 @@
 """Run the labeling eval against the HumAL API.
 
 Two parts share one loop: control (no AI help) and treatment (with AI help).
+Both record the model prediction (infer_proba); in control it is not shown to the labeler.
 Labels are chosen by the pluggable labeler (LABELER): random, model_accept or llm.
 
 Usage:
@@ -178,14 +179,13 @@ def run(client, mode, qs, n_tickets, teams, labeler):
         tickets = client.call("POST", "/data/tickets", json=[ref])["tickets"]
         ticket = tickets[0] if tickets else {}
 
-        model_prediction = second_model_prediction = None
+        proba = client.call(
+            "POST", f"/activelearning/{instance_id}/infer_proba?query_idx={ref}"
+        )
+        ranked = rank_predictions(proba)
+        model_prediction, second_model_prediction = ranked[0][0], ranked[1][0]
         bundle = None
         if mode == "treatment":
-            proba = client.call(
-                "POST", f"/activelearning/{instance_id}/infer_proba?query_idx={ref}"
-            )
-            ranked = rank_predictions(proba)
-            model_prediction, second_model_prediction = ranked[0][0], ranked[1][0]
             bundle = {
                 "infer_proba": proba,
                 "explain_lime": client.call(
