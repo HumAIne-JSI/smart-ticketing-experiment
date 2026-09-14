@@ -1,0 +1,184 @@
+"""Preprocess labeling decisions into analysis/decisions.csv and analysis/sessions.csv.
+
+Session layout is defined in analysis/preprocess_config.json:
+- "instances": list of instance indices merged into one session
+- "trim_last_minutes": keep only decisions within the final N minutes
+- "split_by_day": split merged decisions by labeled_at date (-d1, -d2, ...)
+- "condition": "control"|"treatment", or "conditions_by_day" list for split sessions
+
+Row cleaning: drop rows with null labeled_at (never labeled) and rows with
+null label that are not "I don't know". idk rows are kept.
+"""
+
+import json
+import sys
+from datetime import timedelta
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from audit_sessions import ROOT, build_usernames, parse_ts
+
+ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
+
+COLUMNS = [
+    "session_id",
+    "condition",
+    "al_instance_id",
+    "ref",
+    "label",
+    "labeled_at",
+    "model_prediction",
+    "second_model_prediction",
+    "latency_ms",
+    "most_helpful_feature",
+    "is_tired",
+    "is_difficult",
+    "i_dont_know",
+    "skipped_for_training",
+    "has_xai",
+]
+
+
+def load_instance_decisions(instance_id):
+    path = ROOT / str(instance_id) / "duckdb" / "label_decisions.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def clean_rows(df, session_id):
+    before = len(df)
+    df = df[df["labeled_at"].notna()]
+    null_ts = before - len(df)
+    before = len(df)
+    idk = df["i_dont_know"].fillna(False)
+    df = df[df["label"].notna() | idk]
+    bad_label = before - len(df)
+    return df, null_ts, bad_label
+
+
+def resolve_conditions(spec, n_parts):
+    if "condition" in spec and "conditions_by_day" in spec:
+        raise ValueError(f"{spec['id']}: use either 'condition' or 'conditions_by_day', not both")
+    if "conditions_by_day" in spec:
+        if not spec.get("split_by_day"):
+            raise ValueError(f"{spec['id']}: 'conditions_by_day' requires 'split_by_day'")
+        if len(spec["conditions_by_day"]) != n_parts:
+            raise ValueError(
+                f"{spec['id']}: {n_parts} day-parts but {len(spec['conditions_by_day'])} conditions"
+            )
+        return list(spec["conditions_by_day"])
+    if "condition" not in spec:
+        raise ValueError(f"{spec['id']}: missing 'condition'")
+    return [spec["condition"]] * n_parts
+
+
+def build_session(spec, usernames):
+    rows = []
+    for inst in spec["instances"]:
+        for d in load_instance_decisions(inst):
+            rows.append({**d, "al_instance_id": inst})
+    df = pd.DataFrame(rows)
+    stats = {"raw": len(df)}
+
+    if df.empty:
+        return [], {"raw": 0, "dropped_null_ts": 0, "dropped_bad_label": 0}
+
+    df["ts"] = df["labeled_at"].map(parse_ts)
+    df = df.sort_values("ts")
+
+    if "trim_last_minutes" in spec:
+        cutoff = df["ts"].max() - timedelta(minutes=spec["trim_last_minutes"])
+        stats["trimmed"] = int((df["ts"] < cutoff).sum())
+        df = df[df["ts"] >= cutoff]
+
+    parts = []
+    if spec.get("split_by_day"):
+        for i, (_, day_df) in enumerate(df.groupby(df["ts"].dt.date, sort=True), 1):
+            parts.append((f"{spec['id']}-d{i}", day_df))
+    else:
+        parts.append((spec["id"], df))
+
+    out_rows = []
+    conditions = resolve_conditions(spec, len(parts))
+    for (session_id, part), condition in zip(parts, conditions):
+        cleaned, null_ts, bad_label = clean_rows(part, session_id)
+        stats["dropped_null_ts"] = stats.get("dropped_null_ts", 0) + null_ts
+        stats["dropped_bad_label"] = stats.get("dropped_bad_label", 0) + bad_label
+        cleaned = cleaned.copy()
+        cleaned["session_id"] = session_id
+        cleaned["condition"] = condition
+        cleaned["has_xai"] = cleaned["xai_result"].notna()
+        out_rows.append(cleaned)
+
+    return out_rows, stats
+
+
+def main():
+    config = json.loads((ANALYSIS / "preprocess_config.json").read_text(encoding="utf-8"))
+    usernames = build_usernames()
+
+    all_parts = []
+    session_rows = []
+    for spec in config["sessions"]:
+        parts, stats = build_session(spec, usernames)
+        user = usernames.get(
+            json.loads(
+                (ROOT / str(spec["instances"][0]) / "duckdb" / "al_instances.json")
+                .read_text(encoding="utf-8")
+            )[0]["user_id"],
+            "?",
+        )
+        for cleaned in parts:
+            all_parts.append(cleaned)
+            sid = cleaned["session_id"].iloc[0]
+            ts = cleaned["ts"]
+            span = (ts.max() - ts.min()).total_seconds() / 60 if len(ts) > 1 else 0
+            dups = int(cleaned["ref"].duplicated().sum())
+            session_rows.append(
+                {
+                    "session_id": sid,
+                    "user": user,
+                    "condition": cleaned["condition"].iloc[0],
+                    "instances": ",".join(map(str, spec["instances"])),
+                    "n_labels": len(cleaned),
+                    "n_idk": int(cleaned["i_dont_know"].fillna(False).sum()),
+                    "span_min": round(span, 1),
+                    "dup_refs": dups,
+                    "xai_share": round(cleaned["has_xai"].mean(), 2),
+                }
+            )
+        dropped = stats.get("trimmed", 0) + stats.get("dropped_null_ts", 0) + stats.get("dropped_bad_label", 0)
+        print(
+            f"{spec['id']}: raw={stats['raw']} kept={sum(len(p) for p in parts)} "
+            f"dropped(trim={stats.get('trimmed', 0)}, null_ts={stats.get('dropped_null_ts', 0)}, "
+            f"bad_label={stats.get('dropped_bad_label', 0)})"
+        )
+
+    decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
+    sessions = pd.DataFrame(session_rows)
+
+    decisions.to_csv(ANALYSIS / "decisions.csv", index=False)
+    sessions.to_csv(ANALYSIS / "sessions.csv", index=False)
+
+    print(f"\nTotal decisions: {len(decisions)} | sessions: {len(sessions)}")
+    print("\n=== sessions.csv ===")
+    print(sessions.to_string(index=False))
+    print("\nAudit re-check on cleaned data:")
+    bad = sessions[(sessions["dup_refs"] > 0) | (sessions["span_min"] > 120)]
+    print(bad.to_string(index=False) if len(bad) else "no flags")
+
+    print("\nCondition vs XAI sanity check (expected xai_share ~1.0 for treatment, ~0.0 for control):")
+    for _, row in sessions.iterrows():
+        expected = 1.0 if row["condition"] == "treatment" else 0.0
+        if abs(row["xai_share"] - expected) > 0.5:
+            print(
+                f"  WARNING {row['session_id']} ({row['condition']}): "
+                f"xai_share={row['xai_share']}"
+            )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+{
+  "sessions": [
+    {"id": "user1-s1", "instances": [4], "condition": "control"},
+    {"id": "user1-s2", "instances": [5], "condition": "treatment"},
+    {"id": "user2-s1", "instances": [6], "trim_last_minutes": 90, "condition": "treatment"},
+    {"id": "user2-s2", "instances": [7], "condition": "control"},
+    {"id": "user3-s1", "instances": [8], "condition": "treatment"},
+    {"id": "user3-s2", "instances": [9], "condition": "control"},
+    {"id": "user6-s1", "instances": [15], "condition": "treatment"},
+    {"id": "user6-s2", "instances": [16], "condition": "control"},
+    {"id": "user7-s1", "instances": [17], "condition": "control"},
+    {"id": "user7-s2", "instances": [18], "condition": "treatment"},
+    {"id": "user9-s1", "instances": [21], "condition": "control"},
+    {"id": "user9-s2", "instances": [22], "condition": "treatment"},
+    {"id": "user14-s1", "instances": [31], "condition": "treatment"},
+    {"id": "user14-s2", "instances": [32], "condition": "control"},
+    {"id": "user15-s1", "instances": [33, 34], "split_by_day": true, "conditions_by_day": ["control", "treatment"]},
+    {"id": "user16-s1", "instances": [35], "condition": "treatment"},
+    {"id": "user16-s2", "instances": [36], "condition": "control"}
+  ]
+}

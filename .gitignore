@@ -20,3 +20,10 @@ build/
 /.env
 /results/
 /.env
+
+# Raw per-participant experimental records (not for publication)
+analysis/decisions.csv
+analysis/sessions.csv
+analysis/figures/
+/personas/
+/prompts/
