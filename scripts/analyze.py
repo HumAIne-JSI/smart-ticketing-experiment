@@ -6,18 +6,14 @@ Prints tables and writes PNG charts to analysis/figures/.
 """
 
 import argparse
-import json
-import sys
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import pandas as pd
 from scipy import stats
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from audit_sessions import ROOT, parse_ts
 
 ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
 FIGURES = ANALYSIS / "figures"
@@ -120,35 +116,39 @@ def section_b(scorable):
 
 def section_c():
     print("\n=== C. Model learning curves ===")
-    cond_of = {4: "control", 5: "treatment", 6: "treatment", 7: "control",
-               8: "treatment", 9: "control", 15: "treatment", 16: "control",
-               35: "treatment", 36: "control"}
-    curves = {c: [] for c in ("control", "treatment")}
-    for inst, cond in cond_of.items():
-        path = ROOT / str(inst) / "duckdb" / "metrics.json"
-        if not path.exists():
-            continue
-        for m in json.loads(path.read_text(encoding="utf-8")):
-            curves[cond].append((m["num_labeled"], m["f1_score"]))
+    metrics = pd.read_csv(ANALYSIS / "al_metrics.csv")
     fig, ax = plt.subplots(figsize=(7, 4.5))
-    for cond, pts in curves.items():
-        df = pd.DataFrame(pts, columns=["n", "f1"]).sort_values("n")
-        binned = df.groupby(pd.cut(df["n"], bins=12))["f1"].agg(["mean", "sem"])
-        centers = [iv.mid for iv in binned.index]
-        ax.plot(centers, binned["mean"], marker="o", label=cond)
-        ax.fill_between(centers, binned["mean"] - binned["sem"],
-                        binned["mean"] + binned["sem"], alpha=0.2)
+    colors = {"control": "tab:blue", "treatment": "tab:orange"}
+    steps = {
+        cond: group.groupby("num_labeled")["f1_score"].agg(["mean", "sem", "count"])
+        for cond, group in metrics.groupby("condition")
+    }
+    cutoff = min(step.loc[step["count"] >= 5].index.max() for step in steps.values())
+    print(f"Pooled mean shown up to num_labeled={cutoff} (>=5 instances in both conditions)")
+    for cond, step in steps.items():
+        color = colors[cond]
+        group = metrics[metrics["condition"] == cond]
+        for _, sub in group.groupby("al_instance_id"):
+            sub = sub.sort_values("num_labeled")
+            ax.plot(sub["num_labeled"], sub["f1_score"], color=color, alpha=0.25, linewidth=1)
+        keep = (step["count"] >= 5) & (step.index <= cutoff)
+        ax.plot(step.index[keep], step["mean"][keep], marker="o", markersize=3, color=color, label=cond)
+        ax.fill_between(step.index[keep], (step["mean"] - step["sem"])[keep],
+                        (step["mean"] + step["sem"])[keep], color=color, alpha=0.2)
     ax.set_xlabel("labels used for training")
     ax.set_ylabel("model macro F1 (test)")
-    ax.set_title("Model learning curves (mean ± sem)")
-    ax.legend()
+    ax.set_title("Model learning curves\n(mean ± sem where ≥5 instances remain in both conditions)")
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(Line2D([], [], color="gray", alpha=0.4, linewidth=1))
+    labels.append("individual instances")
+    ax.legend(handles, labels)
     fig.tight_layout()
     fig.savefig(FIGURES / "c_learning_curves.png", dpi=150)
-    for cond, pts in curves.items():
-        df = pd.DataFrame(pts, columns=["n", "f1"])
-        print(f"{cond}: first-10 mean F1={df.nsmallest(10, 'n')['f1'].mean():.3f}  "
-              f"last-10 mean F1={df.nlargest(10, 'n')['f1'].mean():.3f}  "
-              f"({len(df)} iterations)")
+    for cond, group in metrics.groupby("condition"):
+        lo = group.nsmallest(10, "num_labeled")["f1_score"].mean()
+        hi = group.nlargest(10, "num_labeled")["f1_score"].mean()
+        print(f"{cond}: first-10 mean F1={lo:.3f}  last-10 mean F1={hi:.3f}  "
+              f"({group['al_instance_id'].nunique()} instances, {len(group)} iterations)")
 
 
 def section_d(dec, scorable, sessions):
@@ -160,6 +160,17 @@ def section_d(dec, scorable, sessions):
     )
     lat["latency_s"] = lat["latency_ms"] / 1000
     print(lat.to_string(index=False))
+
+    per_dec = scorable.groupby("condition")["latency_ms"].agg(["median", "mean"]) / 1000
+    per_user = (
+        lat.groupby(["user", "condition"])["latency_s"].median()
+        .groupby("condition").agg(["median", "mean"])
+    )
+    summary = pd.concat([per_dec, per_user], keys=["per-decision", "per-user"])
+    summary.index.names = ["level", "condition"]
+    print("\nPer-condition latency summary (s):")
+    print(summary.round(3).to_string())
+
     stat = stats.wilcoxon(
         lat[lat.condition == "treatment"].set_index("user")["latency_s"],
         lat[lat.condition == "control"].set_index("user")["latency_s"],

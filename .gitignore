@@ -24,6 +24,8 @@ build/
 # Raw per-participant experimental records (not for publication)
 analysis/decisions.csv
 analysis/sessions.csv
+analysis/al_metrics.csv
+/questionnaires/
 analysis/figures/
 /personas/
 /prompts/

@@ -8,6 +8,10 @@ Session layout is defined in analysis/preprocess_config.json:
 
 Row cleaning: drop rows with null labeled_at (never labeled) and rows with
 null label that are not "I don't know". idk rows are kept.
+
+Also writes analysis/al_metrics.csv: one row per active-learning retrain
+iteration (from <instance>/duckdb/metrics.json) with the session condition
+assigned via the same day-split rule as the decisions.
 """
 
 import json
@@ -46,6 +50,27 @@ def load_instance_decisions(instance_id):
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+AL_METRIC_COLUMNS = ["al_instance_id", "iteration_id", "num_labeled", "f1_score", "created_at", "condition"]
+
+
+def build_al_metrics(all_parts):
+    parts = pd.concat(all_parts, ignore_index=True)
+    parts["date"] = pd.to_datetime(parts["ts"]).dt.date
+    cond_of = parts.groupby(["al_instance_id", "date"])["condition"].agg(lambda s: s.mode()[0])
+
+    rows = []
+    for inst in sorted(parts["al_instance_id"].unique()):
+        path = ROOT / str(inst) / "duckdb" / "metrics.json"
+        if not path.exists():
+            continue
+        for m in json.loads(path.read_text(encoding="utf-8")):
+            day = parse_ts(m["created_at"]).date()
+            per_day = cond_of.loc[inst]
+            cond = per_day.get(day, per_day.iloc[0])
+            rows.append({**{c: m[c] for c in AL_METRIC_COLUMNS[:-1]}, "condition": cond})
+    return pd.DataFrame(rows)
 
 
 def clean_rows(df, session_id):
@@ -162,6 +187,12 @@ def main():
 
     decisions.to_csv(ANALYSIS / "decisions.csv", index=False)
     sessions.to_csv(ANALYSIS / "sessions.csv", index=False)
+
+    al_metrics = build_al_metrics(all_parts)
+    al_metrics.to_csv(ANALYSIS / "al_metrics.csv", index=False)
+    per_cond = al_metrics.groupby("condition")["al_instance_id"].nunique()
+    print(f"\nAL metrics: {len(al_metrics)} iterations, "
+          + ", ".join(f"{cond}: {n} instances" for cond, n in per_cond.items()))
 
     print(f"\nTotal decisions: {len(decisions)} | sessions: {len(sessions)}")
     print("\n=== sessions.csv ===")
