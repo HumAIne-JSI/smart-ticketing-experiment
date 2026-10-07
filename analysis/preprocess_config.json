@@ -16,6 +16,25 @@
     {"id": "user14-s2", "instances": [32], "condition": "control"},
     {"id": "user15-s1", "instances": [33, 34], "split_by_day": true, "conditions_by_day": ["control", "treatment"]},
     {"id": "user16-s1", "instances": [35], "condition": "treatment"},
-    {"id": "user16-s2", "instances": [36], "condition": "control"}
+    {"id": "user16-s2", "instances": [36], "condition": "control"},
+    {"id": "user11-s1", "instances": [25], "condition": "control"},
+    {"id": "user11-s2", "instances": [26], "condition": "treatment"},
+    {"id": "user13-s1", "instances": [29], "condition": "treatment"},
+    {"id": "user13-s2", "instances": [30], "condition": "control"},
+    {"id": "user17-s1", "instances": [37], "condition": "control"},
+    {"id": "user17-s2", "instances": [38], "condition": "treatment"},
+    {"id": "user20-s1", "instances": [44], "split_by_day": true, "conditions_by_day": ["treatment", "control"]},
+    {"id": "user21-s1", "instances": [46], "condition": "control"},
+    {"id": "user21-s2", "instances": [47], "condition": "treatment"},
+    {"id": "user8-s1", "instances": [19], "condition": "treatment"},
+    {"id": "user8-s2", "instances": [20], "condition": "control"},
+    {"id": "user22-s1", "instances": [48], "condition": "treatment"},
+    {"id": "user22-s2", "instances": [49], "condition": "control"},
+    {"id": "user24-s1", "instances": [52], "condition": "treatment"},
+    {"id": "user24-s2", "instances": [53], "condition": "control"},
+    {"id": "user23-s1", "instances": [50], "condition": "control"},
+    {"id": "user23-s2", "instances": [51], "condition": "treatment"},
+    {"id": "user25-s1", "instances": [54], "condition": "control"},
+    {"id": "user25-s2", "instances": [55], "condition": "treatment"}
   ]
 }

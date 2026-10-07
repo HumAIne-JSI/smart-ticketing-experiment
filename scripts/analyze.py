@@ -1,7 +1,8 @@
 """Analyze treatment effect from analysis/decisions.csv against ground truth.
 
-Sections: a=accuracy, b=complementarity, c=learning curves, d=latency, e=calibration.
-Run all (default) or one via --section a|b|c|d|e.
+Sections: a=accuracy, b=complementarity, c=learning curves, d=latency, e=calibration,
+f=agreement, g=response rates, h=throughput.
+Run all (default) or one via --section a|b|c|d|e|f|g|h.
 Prints tables and writes PNG charts to analysis/figures/.
 """
 
@@ -150,6 +151,32 @@ def section_c():
         print(f"{cond}: first-10 mean F1={lo:.3f}  last-10 mean F1={hi:.3f}  "
               f"({group['al_instance_id'].nunique()} instances, {len(group)} iterations)")
 
+    print("\nPer-run first/last 10 retrain iterations (sorted by num_labeled):")
+    summaries = {}
+    for (cond, inst), g in metrics.groupby(["condition", "al_instance_id"]):
+        g = g.sort_values("num_labeled")
+        summaries.setdefault(cond, []).append(
+            [inst, len(g), g.head(10)["f1_score"].mean(), g.tail(10)["f1_score"].mean()])
+    def ci95(col):
+        n = len(col)
+        if n < 2:
+            return None
+        return stats.t.ppf(0.975, df=n - 1) * col.std() / n ** 0.5
+
+    for cond, rows in summaries.items():
+        table = pd.DataFrame(rows, columns=["al_instance_id", "n_iters", "first10_f1", "last10_f1"])
+        print(f"\n{cond}:")
+        print(table.round(3).to_string(index=False))
+        first, last = table["first10_f1"], table["last10_f1"]
+        h1, h2 = ci95(first), ci95(last)
+        if h1 is None:
+            print(f"  mean over runs: first10={first.mean():.3f}+/-{first.std():.3f}  "
+                  f"last10={last.mean():.3f}+/-{last.std():.3f}")
+        else:
+            print(f"  mean over runs (95% CI): first10={first.mean():.3f} "
+                  f"[{first.mean() - h1:.3f}, {first.mean() + h1:.3f}]  "
+                  f"last10={last.mean():.3f} [{last.mean() - h2:.3f}, {last.mean() + h2:.3f}]")
+
 
 def section_d(dec, scorable, sessions):
     print("\n=== D. Latency & fatigue ===")
@@ -171,14 +198,13 @@ def section_d(dec, scorable, sessions):
     print("\nPer-condition latency summary (s):")
     print(summary.round(3).to_string())
 
-    stat = stats.wilcoxon(
-        lat[lat.condition == "treatment"].set_index("user")["latency_s"],
-        lat[lat.condition == "control"].set_index("user")["latency_s"],
-    )
-    print(f"Wilcoxon on per-user median latency: p={stat.pvalue:.4f}")
+    pivot_lat = lat.pivot(index="user", columns="condition", values="latency_s")
+    users = pivot_lat.dropna().index
+    stat = stats.wilcoxon(pivot_lat.loc[users, "treatment"], pivot_lat.loc[users, "control"])
+    print(f"Wilcoxon on per-user median latency (n={len(users)}): p={stat.pvalue:.4f}")
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
-    data = [scorable.loc[scorable.condition == c, "latency_ms"] / 1000
+    data = [scorable.loc[scorable.condition == c, "latency_ms"].dropna() / 1000
             for c in ("control", "treatment")]
     axes[0].boxplot(data, tick_labels=["control", "treatment"])
     axes[0].set_ylabel("latency (s)")
@@ -198,11 +224,20 @@ def section_d(dec, scorable, sessions):
 
     thirds = pd.cut(scorable["pos_frac"], [0, 1 / 3, 2 / 3, 1],
                     labels=["first", "middle", "last"])
-    fatigue = scorable.groupby(["condition", thirds], observed=True).agg(
-        acc=("human_correct", "mean"), lat_s=("latency_ms", lambda x: x.mean() / 1000)
-    ).reset_index()
+    per_session = (
+        scorable.groupby(["session_id", "condition", thirds], observed=True)
+        .agg(acc=("human_correct", "mean"), lat_s=("latency_ms", "median"),
+             n=("human_correct", "size"))
+    )
+    per_session["lat_s"] = per_session["lat_s"] / 1000
+    fatigue = (
+        per_session.reset_index()
+        .groupby(["condition", "pos_frac"], observed=True)
+        .agg(lat_s=("lat_s", "mean"), acc=("acc", "mean"), n_sessions=("session_id", "nunique"))
+        .reset_index()
+    )
     fatigue["acc_pct"] = fatigue["acc"] * 100
-    print("\nFatigue (thirds of session):")
+    print("\nFatigue (thirds of session; latency = mean of per-session medians):")
     print(fatigue.round(3).to_string(index=False))
     fig2, ax_fat = plt.subplots(figsize=(6, 4.5))
     x_pos = [0, 1, 2]
@@ -212,8 +247,8 @@ def section_d(dec, scorable, sessions):
         ax_fat.plot(x_pos, sub["lat_s"], marker.replace("-", ""),
                     linestyle=":", label=f"{cond} latency (s)")
     ax_fat.set_xticks(x_pos, ["first", "middle", "last"])
-    ax_fat.set_ylabel("accuracy (%) / latency (s)")
-    ax_fat.set_title("Fatigue: accuracy & latency by session third")
+    ax_fat.set_ylabel("accuracy (%) / median latency (s)")
+    ax_fat.set_title("Fatigue: accuracy & latency by session third\n(latency: mean of per-session medians)")
     ax_fat.legend(fontsize=8)
     fig2.tight_layout()
     fig2.savefig(FIGURES / "d_fatigue.png", dpi=150)
@@ -277,9 +312,45 @@ def section_f(scorable):
     print(pd.DataFrame(rows).round(3).to_string(index=False))
 
 
+def section_g(dec):
+    print("\n=== G. Per-condition response rates ===")
+    top1 = dec["label"] == dec["model_prediction"]
+    top2 = top1 | (dec["label"] == dec["second_model_prediction"])
+    idk = dec["i_dont_know"].fillna(False).astype(bool)
+    difficult = dec["is_difficult"].fillna(False).astype(bool)
+    table = dec.assign(top1=top1, top2=top2, idk=idk, difficult=difficult).groupby("condition").agg(
+        n=("top1", "size"), top1=("top1", "mean"), top2=("top2", "mean"),
+        idk=("idk", "mean"), difficult=("difficult", "mean"),
+    )
+    print(table.round(3).to_string())
+
+
+def section_h(scorable, dec, sessions):
+    print("\n=== H. Throughput ===")
+    n = scorable.groupby("session_id").size().rename("n")
+    ts = dec.groupby("session_id")["ts"].agg(["min", "max"])
+    active_h = ((ts["max"] - ts["min"]).dt.total_seconds() / 3600).rename("active_h")
+    t = sessions.set_index("session_id").join(n).join(active_h)
+    t["thr_span"] = t["n"] / (t["span_min"] / 60)
+    t["thr_active"] = t["n"] / t["active_h"]
+    print(t[["user", "condition", "n", "thr_span", "thr_active"]].round(2).to_string())
+
+    summary = t.groupby("condition")[["thr_span", "thr_active"]].agg(["mean", "median", "count"])
+    print("\nPer-condition summary (tickets/hour):")
+    print(summary.round(2).to_string())
+
+    for metric in ("thr_span", "thr_active"):
+        pivot = t.pivot(index="user", columns="condition", values=metric)
+        users = pivot.dropna().index
+        stat = stats.wilcoxon(pivot.loc[users, "treatment"], pivot.loc[users, "control"])
+        print(f"Wilcoxon {metric} (n={len(users)}): "
+              f"control={pivot['control'].mean():.2f}  treatment={pivot['treatment'].mean():.2f}  "
+              f"p={stat.pvalue:.4f}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f"])
+    parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h"])
     args = parser.parse_args()
 
     FIGURES.mkdir(exist_ok=True)
@@ -297,6 +368,10 @@ def main():
         section_e(dec, scorable)
     if args.section in (None, "f"):
         section_f(scorable)
+    if args.section in (None, "g"):
+        section_g(dec)
+    if args.section in (None, "h"):
+        section_h(scorable, dec, sessions)
 
 
 if __name__ == "__main__":

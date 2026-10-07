@@ -7,7 +7,16 @@ Session layout is defined in analysis/preprocess_config.json:
 - "condition": "control"|"treatment", or "conditions_by_day" list for split sessions
 
 Row cleaning: drop rows with null labeled_at (never labeled) and rows with
-null label that are not "I don't know". idk rows are kept.
+null label that are not "I don't know". idk rows are kept. Decision times
+longer than LATENCY_CAP_MIN minutes are set to null (likely session breaks);
+the decision itself is kept.
+
+Session validity: a session must contain at least MIN_BLOCK_MIN minutes of
+sustained labeling (longest same-day block; gaps up to BLOCK_GAP_MIN minutes
+stay within a block). Shorter sessions are excluded entirely: printed during
+the run, absent from the output CSVs. Participants left with only one
+condition after this rule are dropped as well, so every condition-level
+comparison is within-subject.
 
 Also writes analysis/al_metrics.csv: one row per active-learning retrain
 iteration (from <instance>/duckdb/metrics.json) with the session condition
@@ -25,6 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from audit_sessions import ROOT, build_usernames, parse_ts
 
 ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
+
+LATENCY_CAP_MIN = 10
+BLOCK_GAP_MIN = 30   # gaps up to this stay inside one sustained block
+MIN_BLOCK_MIN = 45   # sessions whose longest block is shorter are excluded
 
 COLUMNS = [
     "session_id",
@@ -84,6 +97,15 @@ def clean_rows(df, session_id):
     return df, null_ts, bad_label
 
 
+def longest_block(part):
+    """Minutes covered by the longest same-day run of decisions (gaps <= BLOCK_GAP_MIN)."""
+    ts = part["ts"].sort_values()
+    new_block = (ts.diff() > pd.Timedelta(minutes=BLOCK_GAP_MIN)) | \
+                (ts.dt.date != ts.dt.date.shift())
+    spans = ts.groupby(new_block.cumsum()).agg(["min", "max"])
+    return (spans["max"] - spans["min"]).max().total_seconds() / 60
+
+
 def resolve_conditions(spec, n_parts):
     if "condition" in spec and "conditions_by_day" in spec:
         raise ValueError(f"{spec['id']}: use either 'condition' or 'conditions_by_day', not both")
@@ -119,6 +141,10 @@ def build_session(spec, usernames):
         stats["trimmed"] = int((df["ts"] < cutoff).sum())
         df = df[df["ts"] >= cutoff]
 
+    cap_ms = LATENCY_CAP_MIN * 60_000
+    stats["lat_capped"] = int((df["latency_ms"] > cap_ms).sum())
+    df.loc[df["latency_ms"] > cap_ms, "latency_ms"] = float("nan")
+
     parts = []
     if spec.get("split_by_day"):
         for i, (_, day_df) in enumerate(df.groupby(df["ts"].dt.date, sort=True), 1):
@@ -132,6 +158,10 @@ def build_session(spec, usernames):
         cleaned, null_ts, bad_label = clean_rows(part, session_id)
         stats["dropped_null_ts"] = stats.get("dropped_null_ts", 0) + null_ts
         stats["dropped_bad_label"] = stats.get("dropped_bad_label", 0) + bad_label
+        block = longest_block(cleaned)
+        if block < MIN_BLOCK_MIN:
+            stats.setdefault("excluded", []).append((session_id, block))
+            continue
         cleaned = cleaned.copy()
         cleaned["session_id"] = session_id
         cleaned["condition"] = condition
@@ -147,6 +177,7 @@ def main():
 
     all_parts = []
     session_rows = []
+    total_capped = 0
     for spec in config["sessions"]:
         parts, stats = build_session(spec, usernames)
         user = usernames.get(
@@ -173,17 +204,38 @@ def main():
                     "span_min": round(span, 1),
                     "dup_refs": dups,
                     "xai_share": round(cleaned["has_xai"].mean(), 2),
+                    "n_latency_capped": stats.get("lat_capped", 0),
+                    "longest_block_min": round(longest_block(cleaned), 1),
                 }
             )
         dropped = stats.get("trimmed", 0) + stats.get("dropped_null_ts", 0) + stats.get("dropped_bad_label", 0)
+        total_capped += stats.get("lat_capped", 0)
+        excl = stats.get("excluded", [])
+        note = "  EXCLUDED: " + ", ".join(f"{sid} ({b:.0f}m)" for sid, b in excl) if excl else ""
         print(
             f"{spec['id']}: raw={stats['raw']} kept={sum(len(p) for p in parts)} "
             f"dropped(trim={stats.get('trimmed', 0)}, null_ts={stats.get('dropped_null_ts', 0)}, "
-            f"bad_label={stats.get('dropped_bad_label', 0)})"
+            f"bad_label={stats.get('dropped_bad_label', 0)}) lat_capped={stats.get('lat_capped', 0)}{note}"
         )
 
     decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
     sessions = pd.DataFrame(session_rows)
+
+    complete = sessions.groupby("user")["condition"].nunique()
+    keep_users = set(complete[complete == 2].index)
+    partial = sessions[~sessions["user"].isin(keep_users)]
+    if len(partial):
+        for u, g in partial.groupby("user"):
+            print(f"{u}: dropped entirely (only {'/'.join(sorted(g['condition'].unique()))} "
+                  f"survived the {MIN_BLOCK_MIN}-min block rule)")
+        keep_sids = set(sessions.loc[sessions["user"].isin(keep_users), "session_id"])
+        all_parts = [p for p in all_parts if p["session_id"].iloc[0] in keep_sids]
+        sessions = sessions[sessions["user"].isin(keep_users)]
+        decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
+
+    cond_counts = decisions["condition"].value_counts()
+    print("\nDecisions logged: " + ", ".join(f"{c}={n}" for c, n in cond_counts.items()))
+    print(f"Latencies nulled (>{LATENCY_CAP_MIN} min): {total_capped}")
 
     decisions.to_csv(ANALYSIS / "decisions.csv", index=False)
     sessions.to_csv(ANALYSIS / "sessions.csv", index=False)
