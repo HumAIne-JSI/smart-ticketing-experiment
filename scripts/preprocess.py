@@ -21,6 +21,12 @@ comparison is within-subject.
 Also writes analysis/al_metrics.csv: one row per active-learning retrain
 iteration (from <instance>/duckdb/metrics.json) with the session condition
 assigned via the same day-split rule as the decisions.
+
+Also writes analysis/all_sessions.csv (every configured day-part, including
+the ones excluded by the block rule or the two-conditions rule; flag columns
+kept and excluded_reason) and analysis/all_decisions.csv (the cleaned
+decisions of all of them), so plots can cover participants dropped by
+preprocessing.
 """
 
 import json
@@ -131,7 +137,7 @@ def build_session(spec, usernames):
     stats = {"raw": len(df)}
 
     if df.empty:
-        return [], {"raw": 0, "dropped_null_ts": 0, "dropped_bad_label": 0}
+        return [], [], {"raw": 0, "dropped_null_ts": 0, "dropped_bad_label": 0}
 
     df["ts"] = df["labeled_at"].map(parse_ts)
     df = df.sort_values("ts")
@@ -153,33 +159,55 @@ def build_session(spec, usernames):
         parts.append((spec["id"], df))
 
     out_rows = []
+    all_rows = []
     conditions = resolve_conditions(spec, len(parts))
     for (session_id, part), condition in zip(parts, conditions):
         cleaned, null_ts, bad_label = clean_rows(part, session_id)
         stats["dropped_null_ts"] = stats.get("dropped_null_ts", 0) + null_ts
         stats["dropped_bad_label"] = stats.get("dropped_bad_label", 0) + bad_label
         block = longest_block(cleaned)
-        if block < MIN_BLOCK_MIN:
-            stats.setdefault("excluded", []).append((session_id, block))
-            continue
         cleaned = cleaned.copy()
         cleaned["session_id"] = session_id
         cleaned["condition"] = condition
         cleaned["has_xai"] = cleaned["xai_result"].notna()
+        all_rows.append(cleaned)
+        if block < MIN_BLOCK_MIN:
+            stats.setdefault("excluded", []).append((session_id, block))
+            continue
         out_rows.append(cleaned)
 
-    return out_rows, stats
+    return out_rows, all_rows, stats
+
+
+def session_summary_row(cleaned, user, spec, stats):
+    ts = cleaned["ts"]
+    span = (ts.max() - ts.min()).total_seconds() / 60 if len(ts) > 1 else 0
+    return {
+        "session_id": cleaned["session_id"].iloc[0],
+        "user": user,
+        "condition": cleaned["condition"].iloc[0],
+        "instances": ",".join(map(str, spec["instances"])),
+        "n_labels": len(cleaned),
+        "n_idk": int(cleaned["i_dont_know"].fillna(False).sum()),
+        "span_min": round(span, 1),
+        "dup_refs": int(cleaned["ref"].duplicated().sum()),
+        "xai_share": round(cleaned["has_xai"].mean(), 2),
+        "n_latency_capped": stats.get("lat_capped", 0),
+        "longest_block_min": round(longest_block(cleaned), 1),
+    }
 
 
 def main():
     config = json.loads((ANALYSIS / "preprocess_config.json").read_text(encoding="utf-8"))
     usernames = build_usernames()
 
-    all_parts = []
+    kept_parts = []
+    every_part = []
     session_rows = []
+    all_session_rows = []
     total_capped = 0
     for spec in config["sessions"]:
-        parts, stats = build_session(spec, usernames)
+        parts, all_parts, stats = build_session(spec, usernames)
         user = usernames.get(
             json.loads(
                 (ROOT / str(spec["instances"][0]) / "duckdb" / "al_instances.json")
@@ -187,27 +215,17 @@ def main():
             )[0]["user_id"],
             "?",
         )
-        for cleaned in parts:
-            all_parts.append(cleaned)
+        kept_sids = {p["session_id"].iloc[0] for p in parts}
+        for cleaned in all_parts:
             sid = cleaned["session_id"].iloc[0]
-            ts = cleaned["ts"]
-            span = (ts.max() - ts.min()).total_seconds() / 60 if len(ts) > 1 else 0
-            dups = int(cleaned["ref"].duplicated().sum())
-            session_rows.append(
-                {
-                    "session_id": sid,
-                    "user": user,
-                    "condition": cleaned["condition"].iloc[0],
-                    "instances": ",".join(map(str, spec["instances"])),
-                    "n_labels": len(cleaned),
-                    "n_idk": int(cleaned["i_dont_know"].fillna(False).sum()),
-                    "span_min": round(span, 1),
-                    "dup_refs": dups,
-                    "xai_share": round(cleaned["has_xai"].mean(), 2),
-                    "n_latency_capped": stats.get("lat_capped", 0),
-                    "longest_block_min": round(longest_block(cleaned), 1),
-                }
-            )
+            row = session_summary_row(cleaned, user, spec, stats)
+            row["kept"] = sid in kept_sids
+            row["excluded_reason"] = "" if row["kept"] else f"short_block(<{MIN_BLOCK_MIN}m)"
+            every_part.append(cleaned)
+            all_session_rows.append(row)
+        for cleaned in parts:
+            kept_parts.append(cleaned)
+            session_rows.append(session_summary_row(cleaned, user, spec, stats))
         dropped = stats.get("trimmed", 0) + stats.get("dropped_null_ts", 0) + stats.get("dropped_bad_label", 0)
         total_capped += stats.get("lat_capped", 0)
         excl = stats.get("excluded", [])
@@ -218,7 +236,7 @@ def main():
             f"bad_label={stats.get('dropped_bad_label', 0)}) lat_capped={stats.get('lat_capped', 0)}{note}"
         )
 
-    decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
+    decisions = pd.concat(kept_parts, ignore_index=True)[COLUMNS]
     sessions = pd.DataFrame(session_rows)
 
     complete = sessions.groupby("user")["condition"].nunique()
@@ -229,18 +247,28 @@ def main():
             print(f"{u}: dropped entirely (only {'/'.join(sorted(g['condition'].unique()))} "
                   f"survived the {MIN_BLOCK_MIN}-min block rule)")
         keep_sids = set(sessions.loc[sessions["user"].isin(keep_users), "session_id"])
-        all_parts = [p for p in all_parts if p["session_id"].iloc[0] in keep_sids]
+        kept_parts = [p for p in kept_parts if p["session_id"].iloc[0] in keep_sids]
         sessions = sessions[sessions["user"].isin(keep_users)]
-        decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
+        decisions = pd.concat(kept_parts, ignore_index=True)[COLUMNS]
+
+    all_decisions = pd.concat(every_part, ignore_index=True)[COLUMNS]
+    all_sessions = pd.DataFrame(all_session_rows)
+    incomplete_user = all_sessions["kept"] & ~all_sessions["user"].isin(keep_users)
+    all_sessions.loc[incomplete_user, "kept"] = False
+    all_sessions.loc[incomplete_user, "excluded_reason"] = "user_incomplete"
 
     cond_counts = decisions["condition"].value_counts()
     print("\nDecisions logged: " + ", ".join(f"{c}={n}" for c, n in cond_counts.items()))
     print(f"Latencies nulled (>{LATENCY_CAP_MIN} min): {total_capped}")
+    print(f"\nAll-users tables: {len(all_sessions)} sessions "
+          f"({int((~all_sessions['kept']).sum())} excluded), {len(all_decisions)} decisions")
 
     decisions.to_csv(ANALYSIS / "decisions.csv", index=False)
     sessions.to_csv(ANALYSIS / "sessions.csv", index=False)
+    all_decisions.to_csv(ANALYSIS / "all_decisions.csv", index=False)
+    all_sessions.to_csv(ANALYSIS / "all_sessions.csv", index=False)
 
-    al_metrics = build_al_metrics(all_parts)
+    al_metrics = build_al_metrics(kept_parts)
     al_metrics.to_csv(ANALYSIS / "al_metrics.csv", index=False)
     per_cond = al_metrics.groupby("condition")["al_instance_id"].nunique()
     print(f"\nAL metrics: {len(al_metrics)} iterations, "

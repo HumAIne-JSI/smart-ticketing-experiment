@@ -1,8 +1,8 @@
 """Analyze treatment effect from analysis/decisions.csv against ground truth.
 
 Sections: a=accuracy, b=complementarity, c=learning curves, d=latency, e=calibration,
-f=agreement, g=response rates, h=throughput.
-Run all (default) or one via --section a|b|c|d|e|f|g|h.
+f=agreement, g=response rates, h=throughput, i=idk/difficult totals & team distributions.
+Run all (default) or one via --section a|b|c|d|e|f|g|h|i.
 Prints tables and writes PNG charts to analysis/figures/.
 """
 
@@ -13,6 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -255,6 +256,28 @@ def section_d(dec, scorable, sessions):
     fig.tight_layout()
     fig.savefig(FIGURES / "d_latency_fatigue.png", dpi=150)
 
+    colors = {"control": "tab:blue", "treatment": "tab:orange"}
+    lat_by_cond = {c: scorable.loc[scorable.condition == c, "latency_ms"].dropna() / 1000
+                   for c in ("control", "treatment")}
+    for cond, lat_s in lat_by_cond.items():
+        print(f"{cond} latency median={lat_s.median():.1f}s mean={lat_s.mean():.1f}s n={len(lat_s)}")
+
+    fig3, (ax_geo, ax_lin) = plt.subplots(1, 2, figsize=(12, 4.5))
+    panels = [(ax_geo, np.geomspace(0.1, 600, 40), True, "log scale"),
+              (ax_lin, np.linspace(0.1, 600, 40), False, "linear scale")]
+    for ax, bins, is_log, name in panels:
+        for cond, lat_s in lat_by_cond.items():
+            ax.hist(lat_s, bins=bins, color=colors[cond], alpha=0.6, label=cond)
+            ax.axvline(lat_s.median(), color=colors[cond], ls="--", lw=1)
+        if is_log:
+            ax.set_xscale("log")
+        ax.set_xlabel("latency (s)")
+        ax.set_ylabel("decisions")
+        ax.set_title(f"Ticket latency distribution ({name})\ndashed = median", fontsize=10)
+        ax.legend()
+    fig3.tight_layout()
+    fig3.savefig(FIGURES / "d_latency_distribution.png", dpi=150)
+
 
 def section_e(dec, scorable):
     print("\n=== E. Calibration (IDK / difficulty) ===")
@@ -348,9 +371,33 @@ def section_h(scorable, dec, sessions):
               f"p={stat.pvalue:.4f}")
 
 
+def section_i(dec):
+    print("\n=== I. IDK & difficult tickets: totals and correct-team distributions ===")
+    idk = dec["i_dont_know"].fillna(False).astype(bool)
+    difficult = dec["is_difficult"].fillna(False).astype(bool)
+    print(f"Total idk tickets: {idk.sum()}  Total difficult tickets: {difficult.sum()}  "
+          f"(marked both: {(idk & difficult).sum()})")
+    print("Note: idk tickets carry no human label (excluded from accuracy analysis); "
+          "distributions are of the correct (ground-truth) team.")
+
+    for name, mask in [("idk", idk), ("difficult", difficult)]:
+        sub = dec[mask]
+        dist = sub["ground_truth"].value_counts()
+        print(f"\n{name} (n={len(sub)}) correct-team distribution (overall):")
+        print(pd.DataFrame({"n": dist, "pct": (dist / len(sub) * 100).round(1)}).to_string())
+
+        counts = (sub.groupby(["ground_truth", "condition"]).size()
+                  .unstack("condition", fill_value=0)
+                  .reindex(columns=["control", "treatment"], fill_value=0))
+        pct = counts.div(counts.sum(axis=0), axis=1).mul(100).round(1)
+        per_cond = counts.join(pct, lsuffix="_n", rsuffix="_pct").loc[dist.index]
+        print(f"\n{name} (n={len(sub)}) per condition:")
+        print(per_cond.to_string())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h"])
+    parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h", "i"])
     args = parser.parse_args()
 
     FIGURES.mkdir(exist_ok=True)
@@ -372,6 +419,8 @@ def main():
         section_g(dec)
     if args.section in (None, "h"):
         section_h(scorable, dec, sessions)
+    if args.section in (None, "i"):
+        section_i(dec)
 
 
 if __name__ == "__main__":
