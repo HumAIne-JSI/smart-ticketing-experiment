@@ -1,32 +1,39 @@
-"""Preprocess labeling decisions into analysis/decisions.csv and analysis/sessions.csv.
+"""Preprocess labeling decisions into analysis CSVs for three downstream views.
 
 Session layout is defined in analysis/preprocess_config.json:
 - "instances": list of instance indices merged into one session
-- "trim_last_minutes": keep only decisions within the final N minutes
+- "condition": "control"|"treatment", or "conditions_by_day" list when the
+  session mixes conditions
 - "split_by_day": split merged decisions by labeled_at date (-d1, -d2, ...)
-- "condition": "control"|"treatment", or "conditions_by_day" list for split sessions
+- "trim_last_minutes": fatigue view only - keep only decisions within the
+  final N minutes of the raw instance (drops warm-up labels)
 
-Row cleaning: drop rows with null labeled_at (never labeled) and rows with
-null label that are not "I don't know". idk rows are kept. Decision times
-longer than LATENCY_CAP_MIN minutes are set to null (likely session breaks);
-the decision itself is kept.
+Artifacts (one run produces all three profiles over the same specs):
 
-Session validity: a session must contain at least MIN_BLOCK_MIN minutes of
-sustained labeling (longest same-day block; gaps up to BLOCK_GAP_MIN minutes
-stay within a block). Shorter sessions are excluded entirely: printed during
-the run, absent from the output CSVs. Participants left with only one
-condition after this rule are dropped as well, so every condition-level
-comparison is within-subject.
+- fatigue -> decisions.csv, sessions.csv, al_metrics.csv, plus all_decisions.csv
+  and all_sessions.csv (every configured day-part, including the ones excluded
+  by the block rule; flag columns kept and excluded_reason).
+  Time-based human analysis: trim applied, a session is excluded when its
+  longest same-day labeling block is shorter than MIN_BLOCK_MIN.
+- labels -> decisions_labels.csv, sessions_labels.csv.
+  Label-count based paired human analysis: no trim and no block rule, so the
+  full label sequences (from cold start) and short sessions are included.
+- f1 -> decisions_f1.csv, sessions_f1.csv, al_metrics_f1.csv.
+  Cold-start test-set F1 comparison: like labels, but for sessions whose two
+  day-parts carry different conditions only the FIRST day-part is kept (the
+  second part's model is warm-started by the first part's labels and cannot be
+  attributed to its own condition). al_metrics_f1.csv keeps only the training
+  iterations created up to the kept day-part's last decision date;
+  num_labeled stays the raw training budget.
 
-Also writes analysis/al_metrics.csv: one row per active-learning retrain
-iteration (from <instance>/duckdb/metrics.json) with the session condition
-assigned via the same day-split rule as the decisions.
+Row cleaning (all profiles): drop rows with null labeled_at (never labeled)
+and rows with null label that are not "I don't know"; idk rows are kept.
+Decision times longer than LATENCY_CAP_MIN minutes are set to null (likely
+session breaks); the decision itself is kept.
 
-Also writes analysis/all_sessions.csv (every configured day-part, including
-the ones excluded by the block rule or the two-conditions rule; flag columns
-kept and excluded_reason) and analysis/all_decisions.csv (the cleaned
-decisions of all of them), so plots can cover participants dropped by
-preprocessing.
+Every user is kept in every artifact. Sessions tables carry a `paired` column
+(True iff the user has both conditions alive in that artifact) so analyses can
+filter per need instead of the former hard user-level exclusion.
 """
 
 import json
@@ -43,7 +50,7 @@ ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
 
 LATENCY_CAP_MIN = 10
 BLOCK_GAP_MIN = 30   # gaps up to this stay inside one sustained block
-MIN_BLOCK_MIN = 45   # sessions whose longest block is shorter are excluded
+MIN_BLOCK_MIN = 45   # fatigue profile: sessions whose longest block is shorter are excluded
 
 COLUMNS = [
     "session_id",
@@ -63,6 +70,13 @@ COLUMNS = [
     "has_xai",
 ]
 
+PROFILES = {
+    "fatigue": {"trim": True, "block_rule": True, "first_part_only": False},
+    "labels": {"trim": False, "block_rule": False, "first_part_only": False},
+    "f1": {"trim": False, "block_rule": False, "first_part_only": True},
+}
+SUFFIX = {"fatigue": "", "labels": "_labels", "f1": "_f1"}
+
 
 def load_instance_decisions(instance_id):
     path = ROOT / str(instance_id) / "duckdb" / "label_decisions.json"
@@ -74,21 +88,29 @@ def load_instance_decisions(instance_id):
 AL_METRIC_COLUMNS = ["al_instance_id", "iteration_id", "num_labeled", "f1_score", "created_at", "condition"]
 
 
-def build_al_metrics(all_parts):
-    parts = pd.concat(all_parts, ignore_index=True)
-    parts["date"] = pd.to_datetime(parts["ts"]).dt.date
-    cond_of = parts.groupby(["al_instance_id", "date"])["condition"].agg(lambda s: s.mode()[0])
+def build_al_metrics(parts, cut_dates=None):
+    """One row per active-learning retrain iteration, condition assigned per day.
+
+    cut_dates (f1 profile): {al_instance_id: last decision date of the kept
+    day-part} - iterations created later are dropped (warm-start continuation).
+    """
+    df = pd.concat(parts, ignore_index=True)
+    df["date"] = pd.to_datetime(df["ts"]).dt.date
+    cond_of = df.groupby(["al_instance_id", "date"])["condition"].agg(lambda s: s.mode()[0])
 
     rows = []
-    for inst in sorted(parts["al_instance_id"].unique()):
+    for inst in sorted(df["al_instance_id"].unique()):
         path = ROOT / str(inst) / "duckdb" / "metrics.json"
         if not path.exists():
             continue
+        cut = cut_dates.get(inst) if cut_dates else None
+        per_day = cond_of.loc[inst]
         for m in json.loads(path.read_text(encoding="utf-8")):
             day = parse_ts(m["created_at"]).date()
-            per_day = cond_of.loc[inst]
-            cond = per_day.get(day, per_day.iloc[0])
-            rows.append({**{c: m[c] for c in AL_METRIC_COLUMNS[:-1]}, "condition": cond})
+            if cut is not None and day > cut:
+                continue
+            rows.append({**{c: m[c] for c in AL_METRIC_COLUMNS[:-1]},
+                         "condition": per_day.get(day, per_day.iloc[0])})
     return pd.DataFrame(rows)
 
 
@@ -128,7 +150,7 @@ def resolve_conditions(spec, n_parts):
     return [spec["condition"]] * n_parts
 
 
-def build_session(spec, usernames):
+def build_session(spec, profile):
     rows = []
     for inst in spec["instances"]:
         for d in load_instance_decisions(inst):
@@ -142,7 +164,7 @@ def build_session(spec, usernames):
     df["ts"] = df["labeled_at"].map(parse_ts)
     df = df.sort_values("ts")
 
-    if "trim_last_minutes" in spec:
+    if profile["trim"] and "trim_last_minutes" in spec:
         cutoff = df["ts"].max() - timedelta(minutes=spec["trim_last_minutes"])
         stats["trimmed"] = int((df["ts"] < cutoff).sum())
         df = df[df["ts"] >= cutoff]
@@ -158,9 +180,13 @@ def build_session(spec, usernames):
     else:
         parts.append((spec["id"], df))
 
+    conditions = resolve_conditions(spec, len(parts))
+    if profile["first_part_only"] and len(parts) > 1:
+        stats["first_only"] = [parts[0][0]]
+        parts, conditions = parts[:1], conditions[:1]
+
     out_rows = []
     all_rows = []
-    conditions = resolve_conditions(spec, len(parts))
     for (session_id, part), condition in zip(parts, conditions):
         cleaned, null_ts, bad_label = clean_rows(part, session_id)
         stats["dropped_null_ts"] = stats.get("dropped_null_ts", 0) + null_ts
@@ -171,7 +197,10 @@ def build_session(spec, usernames):
         cleaned["condition"] = condition
         cleaned["has_xai"] = cleaned["xai_result"].notna()
         all_rows.append(cleaned)
-        if block < MIN_BLOCK_MIN:
+        if stats.get("first_only", [None])[0] == session_id:
+            stats["cut"] = {inst: cleaned["ts"].max().date()
+                            for inst in cleaned["al_instance_id"].unique()}
+        if profile["block_rule"] and block < MIN_BLOCK_MIN:
             stats.setdefault("excluded", []).append((session_id, block))
             continue
         out_rows.append(cleaned)
@@ -197,17 +226,30 @@ def session_summary_row(cleaned, user, spec, stats):
     }
 
 
-def main():
-    config = json.loads((ANALYSIS / "preprocess_config.json").read_text(encoding="utf-8"))
-    usernames = build_usernames()
+def add_paired_flag(sessions, label=""):
+    n_cond = sessions.groupby("user")["condition"].nunique()
+    paired_users = set(n_cond[n_cond == 2].index)
+    sessions["paired"] = sessions["user"].isin(paired_users)
+    for u in sorted(n_cond.index[~n_cond.eq(2)]):
+        conds = sorted(sessions.loc[sessions["user"] == u, "condition"].unique())
+        print(f"{u}: paired=False (only {'/'.join(conds)})")
+    if not len(n_cond) - len(paired_users):
+        print(f"{label}: all users are paired (both conditions present)" if label
+              else "all users are paired (both conditions present)")
 
+
+def run_profile(name, profile, config, usernames):
+    suffix = SUFFIX[name]
+    print(f"\n=== {name} artifact ===")
     kept_parts = []
-    every_part = []
     session_rows = []
+    all_parts = []
     all_session_rows = []
     total_capped = 0
+    cut_dates = {}
+
     for spec in config["sessions"]:
-        parts, all_parts, stats = build_session(spec, usernames)
+        parts, all_parts_of_spec, stats = build_session(spec, profile)
         user = usernames.get(
             json.loads(
                 (ROOT / str(spec["instances"][0]) / "duckdb" / "al_instances.json")
@@ -215,21 +257,24 @@ def main():
             )[0]["user_id"],
             "?",
         )
-        kept_sids = {p["session_id"].iloc[0] for p in parts}
-        for cleaned in all_parts:
-            sid = cleaned["session_id"].iloc[0]
-            row = session_summary_row(cleaned, user, spec, stats)
-            row["kept"] = sid in kept_sids
-            row["excluded_reason"] = "" if row["kept"] else f"short_block(<{MIN_BLOCK_MIN}m)"
-            every_part.append(cleaned)
-            all_session_rows.append(row)
         for cleaned in parts:
             kept_parts.append(cleaned)
             session_rows.append(session_summary_row(cleaned, user, spec, stats))
-        dropped = stats.get("trimmed", 0) + stats.get("dropped_null_ts", 0) + stats.get("dropped_bad_label", 0)
+        if name == "fatigue":
+            kept_sids = {p["session_id"].iloc[0] for p in parts}
+            for cleaned in all_parts_of_spec:
+                sid = cleaned["session_id"].iloc[0]
+                row = session_summary_row(cleaned, user, spec, stats)
+                row["kept"] = sid in kept_sids
+                row["excluded_reason"] = "" if row["kept"] else f"short_block(<{MIN_BLOCK_MIN}m)"
+                all_parts.append(cleaned)
+                all_session_rows.append(row)
         total_capped += stats.get("lat_capped", 0)
+        cut_dates.update(stats.get("cut", {}))
         excl = stats.get("excluded", [])
         note = "  EXCLUDED: " + ", ".join(f"{sid} ({b:.0f}m)" for sid, b in excl) if excl else ""
+        if stats.get("first_only"):
+            note += "  first-part only: " + ", ".join(stats["first_only"])
         print(
             f"{spec['id']}: raw={stats['raw']} kept={sum(len(p) for p in parts)} "
             f"dropped(trim={stats.get('trimmed', 0)}, null_ts={stats.get('dropped_null_ts', 0)}, "
@@ -239,56 +284,55 @@ def main():
     decisions = pd.concat(kept_parts, ignore_index=True)[COLUMNS]
     sessions = pd.DataFrame(session_rows)
 
-    complete = sessions.groupby("user")["condition"].nunique()
-    keep_users = set(complete[complete == 2].index)
-    partial = sessions[~sessions["user"].isin(keep_users)]
-    if len(partial):
-        for u, g in partial.groupby("user"):
-            print(f"{u}: dropped entirely (only {'/'.join(sorted(g['condition'].unique()))} "
-                  f"survived the {MIN_BLOCK_MIN}-min block rule)")
-        keep_sids = set(sessions.loc[sessions["user"].isin(keep_users), "session_id"])
-        kept_parts = [p for p in kept_parts if p["session_id"].iloc[0] in keep_sids]
-        sessions = sessions[sessions["user"].isin(keep_users)]
-        decisions = pd.concat(kept_parts, ignore_index=True)[COLUMNS]
-
-    all_decisions = pd.concat(every_part, ignore_index=True)[COLUMNS]
-    all_sessions = pd.DataFrame(all_session_rows)
-    incomplete_user = all_sessions["kept"] & ~all_sessions["user"].isin(keep_users)
-    all_sessions.loc[incomplete_user, "kept"] = False
-    all_sessions.loc[incomplete_user, "excluded_reason"] = "user_incomplete"
-
     cond_counts = decisions["condition"].value_counts()
     print("\nDecisions logged: " + ", ".join(f"{c}={n}" for c, n in cond_counts.items()))
     print(f"Latencies nulled (>{LATENCY_CAP_MIN} min): {total_capped}")
-    print(f"\nAll-users tables: {len(all_sessions)} sessions "
-          f"({int((~all_sessions['kept']).sum())} excluded), {len(all_decisions)} decisions")
-
-    decisions.to_csv(ANALYSIS / "decisions.csv", index=False)
-    sessions.to_csv(ANALYSIS / "sessions.csv", index=False)
-    all_decisions.to_csv(ANALYSIS / "all_decisions.csv", index=False)
-    all_sessions.to_csv(ANALYSIS / "all_sessions.csv", index=False)
-
-    al_metrics = build_al_metrics(kept_parts)
-    al_metrics.to_csv(ANALYSIS / "al_metrics.csv", index=False)
-    per_cond = al_metrics.groupby("condition")["al_instance_id"].nunique()
-    print(f"\nAL metrics: {len(al_metrics)} iterations, "
-          + ", ".join(f"{cond}: {n} instances" for cond, n in per_cond.items()))
-
     print(f"\nTotal decisions: {len(decisions)} | sessions: {len(sessions)}")
-    print("\n=== sessions.csv ===")
+    print("\n=== sessions%s ===" % suffix)
     print(sessions.to_string(index=False))
-    print("\nAudit re-check on cleaned data:")
-    bad = sessions[(sessions["dup_refs"] > 0) | (sessions["span_min"] > 120)]
-    print(bad.to_string(index=False) if len(bad) else "no flags")
+    print("\npaired flags:")
+    add_paired_flag(sessions, label=name)
 
-    print("\nCondition vs XAI sanity check (expected xai_share ~1.0 for treatment, ~0.0 for control):")
-    for _, row in sessions.iterrows():
-        expected = 1.0 if row["condition"] == "treatment" else 0.0
-        if abs(row["xai_share"] - expected) > 0.5:
-            print(
-                f"  WARNING {row['session_id']} ({row['condition']}): "
-                f"xai_share={row['xai_share']}"
-            )
+    decisions.to_csv(ANALYSIS / f"decisions{suffix}.csv", index=False)
+    sessions.to_csv(ANALYSIS / f"sessions{suffix}.csv", index=False)
+
+    if name in ("fatigue", "f1"):
+        al_metrics = build_al_metrics(kept_parts, cut_dates if name == "f1" else None)
+        al_metrics.to_csv(ANALYSIS / f"al_metrics{suffix}.csv", index=False)
+        per_cond = al_metrics.groupby("condition")["al_instance_id"].nunique()
+        print(f"\nAL metrics: {len(al_metrics)} iterations, "
+              + ", ".join(f"{cond}: {n} instances" for cond, n in per_cond.items()))
+
+    if name == "fatigue":
+        all_decisions = pd.concat(all_parts, ignore_index=True)[COLUMNS]
+        all_sessions = pd.DataFrame(all_session_rows)
+        paired_users = set(sessions.loc[sessions["paired"], "user"])
+        all_sessions["paired"] = all_sessions["user"].isin(paired_users)
+        all_decisions.to_csv(ANALYSIS / "all_decisions.csv", index=False)
+        all_sessions.to_csv(ANALYSIS / "all_sessions.csv", index=False)
+
+        print(f"\nAll-users tables: {len(all_sessions)} sessions "
+              f"({int((~all_sessions['kept']).sum())} excluded), {len(all_decisions)} decisions")
+
+        print("\nAudit re-check on cleaned data:")
+        bad = sessions[(sessions["dup_refs"] > 0) | (sessions["span_min"] > 120)]
+        print(bad.to_string(index=False) if len(bad) else "no flags")
+
+        print("\nCondition vs XAI sanity check (expected xai_share ~1.0 for treatment, ~0.0 for control):")
+        for _, row in sessions.iterrows():
+            expected = 1.0 if row["condition"] == "treatment" else 0.0
+            if abs(row["xai_share"] - expected) > 0.5:
+                print(
+                    f"  WARNING {row['session_id']} ({row['condition']}): "
+                    f"xai_share={row['xai_share']}"
+                )
+
+
+def main():
+    config = json.loads((ANALYSIS / "preprocess_config.json").read_text(encoding="utf-8"))
+    usernames = build_usernames()
+    for name, profile in PROFILES.items():
+        run_profile(name, profile, config, usernames)
 
 
 if __name__ == "__main__":
