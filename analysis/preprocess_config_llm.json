@@ -1,0 +1,8 @@
+{
+  "sessions": [
+    {"id": "LLM_User1-s1", "instances": [35], "condition": "treatment", "max_scorable": 50},
+    {"id": "LLM_User1-s2", "instances": [37], "condition": "control", "max_scorable": 50},
+    {"id": "LLM_User2-s1", "instances": [36], "condition": "control", "max_scorable": 50},
+    {"id": "LLM_User2-s2", "instances": [38], "condition": "treatment", "max_scorable": 50}
+  ]
+}

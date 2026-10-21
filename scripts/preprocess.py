@@ -1,12 +1,19 @@
 """Preprocess labeling decisions into analysis CSVs for three downstream views.
 
-Session layout is defined in analysis/preprocess_config.json:
+Session layout is defined in analysis/preprocess_config.json (human) or
+analysis/preprocess_config_llm.json (llm, via --llm):
 - "instances": list of instance indices merged into one session
 - "condition": "control"|"treatment", or "conditions_by_day" list when the
   session mixes conditions
 - "split_by_day": split merged decisions by labeled_at date (-d1, -d2, ...)
 - "trim_last_minutes": fatigue view only - keep only decisions within the
   final N minutes of the raw instance (drops warm-up labels)
+- "max_scorable": keep only the first N scorable (non-idk) decisions in
+  chronological order; any "I don't know" tickets at or before the Nth
+  scorable ticket are kept, later rows are dropped. Used to equalize
+  session lengths (e.g. LLM sessions to 50 scorable each). The AL-metrics
+  cut date is also moved back to the truncated max timestamp so learning
+  curves only use training iterations created up to the kept decisions.
 
 Artifacts (one run produces all three profiles over the same specs):
 
@@ -36,17 +43,17 @@ Every user is kept in every artifact. Sessions tables carry a `paired` column
 filter per need instead of the former hard user-level exclusion.
 """
 
+import argparse
 import json
 import sys
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from audit_sessions import ROOT, build_usernames, parse_ts
-
-ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
+from audit_sessions import build_usernames, parse_ts
+from cohort_config import add_cohort_args, resolve_cohort_from_args
 
 LATENCY_CAP_MIN = 10
 BLOCK_GAP_MIN = 30   # gaps up to this stay inside one sustained block
@@ -78,8 +85,8 @@ PROFILES = {
 SUFFIX = {"fatigue": "", "labels": "_labels", "f1": "_f1"}
 
 
-def load_instance_decisions(instance_id):
-    path = ROOT / str(instance_id) / "duckdb" / "label_decisions.json"
+def load_instance_decisions(instance_id, root):
+    path = root / str(instance_id) / "duckdb" / "label_decisions.json"
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8"))
@@ -88,11 +95,13 @@ def load_instance_decisions(instance_id):
 AL_METRIC_COLUMNS = ["al_instance_id", "iteration_id", "num_labeled", "f1_score", "created_at", "condition"]
 
 
-def build_al_metrics(parts, cut_dates=None):
+def build_al_metrics(parts, root, cut_dates=None):
     """One row per active-learning retrain iteration, condition assigned per day.
 
     cut_dates (f1 profile): {al_instance_id: last decision date of the kept
     day-part} - iterations created later are dropped (warm-start continuation).
+    Truncation cuts (max_scorable) are datetimes - iterations created after
+    the truncated max timestamp are dropped.
     """
     df = pd.concat(parts, ignore_index=True)
     df["date"] = pd.to_datetime(df["ts"]).dt.date
@@ -100,15 +109,20 @@ def build_al_metrics(parts, cut_dates=None):
 
     rows = []
     for inst in sorted(df["al_instance_id"].unique()):
-        path = ROOT / str(inst) / "duckdb" / "metrics.json"
+        path = root / str(inst) / "duckdb" / "metrics.json"
         if not path.exists():
             continue
         cut = cut_dates.get(inst) if cut_dates else None
         per_day = cond_of.loc[inst]
         for m in json.loads(path.read_text(encoding="utf-8")):
-            day = parse_ts(m["created_at"]).date()
-            if cut is not None and day > cut:
-                continue
+            m_ts = parse_ts(m["created_at"])
+            if cut is not None:
+                if isinstance(cut, datetime):
+                    if m_ts > cut:
+                        continue
+                elif m_ts.date() > cut:
+                    continue
+            day = m_ts.date()
             rows.append({**{c: m[c] for c in AL_METRIC_COLUMNS[:-1]},
                          "condition": per_day.get(day, per_day.iloc[0])})
     return pd.DataFrame(rows)
@@ -150,10 +164,10 @@ def resolve_conditions(spec, n_parts):
     return [spec["condition"]] * n_parts
 
 
-def build_session(spec, profile):
+def build_session(spec, profile, root):
     rows = []
     for inst in spec["instances"]:
-        for d in load_instance_decisions(inst):
+        for d in load_instance_decisions(inst, root):
             rows.append({**d, "al_instance_id": inst})
     df = pd.DataFrame(rows)
     stats = {"raw": len(df)}
@@ -191,6 +205,20 @@ def build_session(spec, profile):
         cleaned, null_ts, bad_label = clean_rows(part, session_id)
         stats["dropped_null_ts"] = stats.get("dropped_null_ts", 0) + null_ts
         stats["dropped_bad_label"] = stats.get("dropped_bad_label", 0) + bad_label
+        max_n = spec.get("max_scorable")
+        if max_n is not None:
+            ordered = cleaned.sort_values("ts")
+            is_scorable = ~ordered["i_dont_know"].fillna(False).astype(bool)
+            if is_scorable.sum() > max_n:
+                cutoff_ts = ordered.loc[is_scorable, "ts"].iloc[max_n - 1]
+                dropped = int((ordered["ts"] > cutoff_ts).sum())
+                stats["truncated"] = stats.get("truncated", 0) + dropped
+                cleaned = ordered[ordered["ts"] <= cutoff_ts].copy()
+                cut = {inst: cleaned[cleaned["al_instance_id"] == inst]["ts"].max()
+                       for inst in cleaned["al_instance_id"].unique()}
+                prev = stats.setdefault("truncate_cut", {})
+                for k, v in cut.items():
+                    prev[k] = min(prev[k], v) if k in prev else v
         block = longest_block(cleaned)
         cleaned = cleaned.copy()
         cleaned["session_id"] = session_id
@@ -238,7 +266,7 @@ def add_paired_flag(sessions, label=""):
               else "all users are paired (both conditions present)")
 
 
-def run_profile(name, profile, config, usernames):
+def run_profile(name, profile, config, usernames, root, out_dir):
     suffix = SUFFIX[name]
     print(f"\n=== {name} artifact ===")
     kept_parts = []
@@ -247,12 +275,13 @@ def run_profile(name, profile, config, usernames):
     all_session_rows = []
     total_capped = 0
     cut_dates = {}
+    truncate_cuts = {}
 
     for spec in config["sessions"]:
-        parts, all_parts_of_spec, stats = build_session(spec, profile)
+        parts, all_parts_of_spec, stats = build_session(spec, profile, root)
         user = usernames.get(
             json.loads(
-                (ROOT / str(spec["instances"][0]) / "duckdb" / "al_instances.json")
+                (root / str(spec["instances"][0]) / "duckdb" / "al_instances.json")
                 .read_text(encoding="utf-8")
             )[0]["user_id"],
             "?",
@@ -271,14 +300,19 @@ def run_profile(name, profile, config, usernames):
                 all_session_rows.append(row)
         total_capped += stats.get("lat_capped", 0)
         cut_dates.update(stats.get("cut", {}))
+        for k, v in stats.get("truncate_cut", {}).items():
+            truncate_cuts[k] = min(truncate_cuts[k], v) if k in truncate_cuts else v
         excl = stats.get("excluded", [])
         note = "  EXCLUDED: " + ", ".join(f"{sid} ({b:.0f}m)" for sid, b in excl) if excl else ""
         if stats.get("first_only"):
             note += "  first-part only: " + ", ".join(stats["first_only"])
+        if stats.get("truncated"):
+            note += f"  truncated to first {spec.get('max_scorable')} scorable (-{stats['truncated']})"
         print(
             f"{spec['id']}: raw={stats['raw']} kept={sum(len(p) for p in parts)} "
             f"dropped(trim={stats.get('trimmed', 0)}, null_ts={stats.get('dropped_null_ts', 0)}, "
-            f"bad_label={stats.get('dropped_bad_label', 0)}) lat_capped={stats.get('lat_capped', 0)}{note}"
+            f"bad_label={stats.get('dropped_bad_label', 0)}, truncated={stats.get('truncated', 0)}) "
+            f"lat_capped={stats.get('lat_capped', 0)}{note}"
         )
 
     decisions = pd.concat(kept_parts, ignore_index=True)[COLUMNS]
@@ -293,12 +327,22 @@ def run_profile(name, profile, config, usernames):
     print("\npaired flags:")
     add_paired_flag(sessions, label=name)
 
-    decisions.to_csv(ANALYSIS / f"decisions{suffix}.csv", index=False)
-    sessions.to_csv(ANALYSIS / f"sessions{suffix}.csv", index=False)
+    decisions.to_csv(out_dir / f"decisions{suffix}.csv", index=False)
+    sessions.to_csv(out_dir / f"sessions{suffix}.csv", index=False)
 
     if name in ("fatigue", "f1"):
-        al_metrics = build_al_metrics(kept_parts, cut_dates if name == "f1" else None)
-        al_metrics.to_csv(ANALYSIS / f"al_metrics{suffix}.csv", index=False)
+        effective_cuts = dict(cut_dates) if name == "f1" else {}
+        for k, v in truncate_cuts.items():
+            if k in effective_cuts:
+                existing = effective_cuts[k]
+                e_ts = (datetime.combine(existing, datetime.max.time())
+                        if isinstance(existing, date) and not isinstance(existing, datetime)
+                        else existing)
+                effective_cuts[k] = v if v <= e_ts else existing
+            else:
+                effective_cuts[k] = v
+        al_metrics = build_al_metrics(kept_parts, root, effective_cuts or None)
+        al_metrics.to_csv(out_dir / f"al_metrics{suffix}.csv", index=False)
         per_cond = al_metrics.groupby("condition")["al_instance_id"].nunique()
         print(f"\nAL metrics: {len(al_metrics)} iterations, "
               + ", ".join(f"{cond}: {n} instances" for cond, n in per_cond.items()))
@@ -308,8 +352,8 @@ def run_profile(name, profile, config, usernames):
         all_sessions = pd.DataFrame(all_session_rows)
         paired_users = set(sessions.loc[sessions["paired"], "user"])
         all_sessions["paired"] = all_sessions["user"].isin(paired_users)
-        all_decisions.to_csv(ANALYSIS / "all_decisions.csv", index=False)
-        all_sessions.to_csv(ANALYSIS / "all_sessions.csv", index=False)
+        all_decisions.to_csv(out_dir / "all_decisions.csv", index=False)
+        all_sessions.to_csv(out_dir / "all_sessions.csv", index=False)
 
         print(f"\nAll-users tables: {len(all_sessions)} sessions "
               f"({int((~all_sessions['kept']).sum())} excluded), {len(all_decisions)} decisions")
@@ -329,10 +373,23 @@ def run_profile(name, profile, config, usernames):
 
 
 def main():
-    config = json.loads((ANALYSIS / "preprocess_config.json").read_text(encoding="utf-8"))
-    usernames = build_usernames()
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_cohort_args(parser)
+    args = parser.parse_args()
+    cohort = resolve_cohort_from_args(args)
+    out_dir = cohort.analysis
+    out_dir.mkdir(parents=True, exist_ok=True)
+    config = json.loads(cohort.config.read_text(encoding="utf-8"))
+    usernames = build_usernames(cohort.root)
+    print(f"Cohort: {cohort.label} (config: {cohort.config.name}, out: {out_dir})")
     for name, profile in PROFILES.items():
-        run_profile(name, profile, config, usernames)
+        # LLM has no human fatigue/break behaviour: run the fatigue artifact
+        # without trim/block so decisions.csv equals the balanced 50/scorable
+        # output (same rows as the labels view).
+        effective = dict(profile)
+        if cohort.label == "llm" and name == "fatigue":
+            effective = {"trim": False, "block_rule": False, "first_part_only": False}
+        run_profile(name, effective, config, usernames, cohort.root, out_dir)
 
 
 if __name__ == "__main__":

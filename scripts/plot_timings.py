@@ -4,14 +4,17 @@ One panel per session. The slope is labeling pace, plateaus are breaks,
 and dashed red lines mark gaps > 30 min (participant likely left the desk).
 Dots are colored by that decision's latency (capped at 10 min; gray = nulled).
 
-Writes analysis/figures/timings_per_session.png from decisions.csv +
+Writes <cohort>/figures/timings_per_session.png from decisions.csv +
 sessions.csv (only sessions that survived preprocessing) and
-analysis/figures/timings_per_session_all.png from all_decisions.csv +
+<cohort>/figures/timings_per_session_all.png from all_decisions.csv +
 all_sessions.csv (every configured session, titles of excluded ones prefixed
 with an X; x-axes share the longest kept session's span, longer excluded
 sessions draw on their own extended axis).
+Use --human (default) or --llm to select the cohort.
 """
 
+import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -19,6 +22,9 @@ import numpy as np
 import pandas as pd
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cohort_config import add_cohort_args, resolve_cohort_from_args
 
 ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
 FIGURES = ANALYSIS / "figures"
@@ -53,8 +59,15 @@ def plot(dec, sessions, out_path, suptitle, shared_xlim=False):
     norm = Normalize(vmin=0, vmax=LAT_CAP_S)
 
     groups = []
-    order = sorted(sessions.index,
-                   key=lambda s: (int(sessions.loc[s, "user"][4:]), s))
+    def _sort_key(s):
+        user = str(sessions.loc[s, "user"])
+        # human: user12 -> 12; llm: LLM_User1 -> 1; fallback to name sort
+        digits = "".join(ch for ch in user if ch.isdigit())
+        try:
+            return (int(digits), s) if digits else (10**9, user, s)
+        except ValueError:
+            return (10**9, user, s)
+    order = sorted(sessions.index, key=_sort_key)
     for sid in order:
         g = dec[dec.session_id == sid].sort_values("ts")
         if g.empty:
@@ -97,6 +110,15 @@ def plot(dec, sessions, out_path, suptitle, shared_xlim=False):
 
 
 def main():
+    global ANALYSIS, FIGURES
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_cohort_args(parser)
+    args = parser.parse_args()
+    cohort = resolve_cohort_from_args(args)
+    ANALYSIS = cohort.analysis
+    FIGURES = cohort.figures
+    FIGURES.mkdir(parents=True, exist_ok=True)
+    print(f"Cohort: {cohort.label} (input: {ANALYSIS})")
     dec, ses = load_sessions()
     plot(dec, ses, FIGURES / "timings_per_session.png",
          "Label timing per session (dashed red = gap > 30 min)")

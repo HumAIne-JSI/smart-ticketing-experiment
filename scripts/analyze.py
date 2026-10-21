@@ -4,13 +4,15 @@ Sections: a=accuracy & macro F1, b=complementarity, c=learning curves, d=latency
 e=calibration, f=agreement, g=response rates, h=throughput, i=idk/difficult totals,
 j=balanced analysis cutoffs, k=balanced-cohort learning curves.
 Run all (default) or one via --section a|b|c|d|e|f|g|h|i|j|k.
-Prints tables, writes PNG charts to analysis/figures/ and an HTML report
-(reports/analyze_report.html) with the same content and embedded figures.
+Use --human (default) or --llm to select the cohort; reads that cohort's
+analysis dir and writes PNG charts to its figures/ dir and an HTML report
+(reports/analyze_report.html or reports/analyze_report_llm.html).
 """
 
 import argparse
 import base64
 import re
+import sys
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -24,9 +26,13 @@ import pandas as pd
 from scipy import stats
 from sklearn.metrics import f1_score
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cohort_config import add_cohort_args, resolve_cohort_from_args
+
 ANALYSIS = Path(__file__).resolve().parents[1] / "analysis"
 FIGURES = ANALYSIS / "figures"
 REPORT = Path(__file__).resolve().parents[1] / "reports" / "analyze_report.html"
+COHORT_LABEL = "human"
 
 _sections: list[tuple[str, list]] = []
 _blocks: list = []
@@ -83,8 +89,8 @@ def render_report():
         ".caption{color:#666;font-size:.85rem;margin:.2rem 0}",
         "</style></head><body>",
         "<h1>Smart ticketing experiment — analysis report</h1>",
-        f"<p>Generated {datetime.now():%Y-%m-%d %H:%M} from analysis/decisions.csv "
-        "(figures also saved as PNG in analysis/figures/).</p>",
+        f"<p>Generated {datetime.now():%Y-%m-%d %H:%M} from {ANALYSIS.name}/decisions.csv "
+        f"(cohort: {COHORT_LABEL}; figures also saved as PNG in {ANALYSIS.name}/figures/).</p>",
         "<nav>",
         "".join(f"<a href='#{slug(t)}'>{escape(t)}</a>" for t, _ in _sections),
         "</nav>",
@@ -104,7 +110,7 @@ def render_report():
                 if caption:
                     parts.append(f"<p class='caption'>{escape(caption)}</p>")
     parts.append("</body></html>")
-    REPORT.parent.mkdir(exist_ok=True)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(parts), encoding="utf-8")
     print(f"\nHTML report written to {REPORT}")
 
@@ -255,7 +261,10 @@ def section_c():
         for cond, group in metrics.groupby("condition")
     }
     cutoff = min(step.loc[step["count"] >= 5].index.max() for step in steps.values())
-    out(f"Pooled mean shown up to num_labeled={cutoff} (>=5 instances in both conditions)")
+    if pd.isna(cutoff):
+        out("No budget with >=5 instances in both conditions; showing individual runs only")
+    else:
+        out(f"Pooled mean shown up to num_labeled={cutoff} (>=5 instances in both conditions)")
     for cond, step in steps.items():
         color = colors[cond]
         group = metrics[metrics["condition"] == cond]
@@ -661,6 +670,9 @@ def section_k():
             f"{[rows[i]['cutoff'] for i in range(len(rows)) if i not in alive]}")
     cohorts = [cohorts[i] for i in alive]
     rows = [rows[i] for i in alive]
+    if not cohorts:
+        out(f"No retention cohorts with >={MIN_USERS} paired users; skipping cohort plots.")
+        return
     out("\nRetention cohorts (each subplot keeps this exact instance set over "
         "its whole x-range; x stops at the cohort's lowest last training "
         "budget, not at the cutoff value, which is counted in human tickets):")
@@ -775,11 +787,20 @@ def section_k():
 
 
 def main():
+    global ANALYSIS, FIGURES, REPORT, COHORT_LABEL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"])
+    add_cohort_args(parser)
     args = parser.parse_args()
 
-    FIGURES.mkdir(exist_ok=True)
+    cohort = resolve_cohort_from_args(args)
+    ANALYSIS = cohort.analysis
+    FIGURES = cohort.figures
+    REPORT = cohort.report
+    COHORT_LABEL = cohort.label
+    print(f"Cohort: {COHORT_LABEL} (input: {ANALYSIS}, report: {REPORT})")
+
+    FIGURES.mkdir(parents=True, exist_ok=True)
     dec, sessions, scorable = load_data()
 
     if args.section in (None, "a"):

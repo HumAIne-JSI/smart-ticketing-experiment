@@ -5,9 +5,13 @@ Read-only: prints a per-session and per-participant summary with flags.
 
 import argparse
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from statistics import median
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cohort_config import add_cohort_args, resolve_cohort_from_args
 
 ROOT = Path(__file__).resolve().parents[1] / "database" / "experiment" / "instances"
 
@@ -24,10 +28,12 @@ def parse_ts(value):
     return datetime.fromisoformat(value)
 
 
-def build_usernames():
+def build_usernames(root=None):
     """Map user_id -> username, collected across all instances."""
+    if root is None:
+        root = ROOT
     mapping = {}
-    for d in sorted(ROOT.iterdir(), key=lambda p: int(p.name)):
+    for d in sorted(root.iterdir(), key=lambda p: int(p.name)):
         if not d.is_dir():
             continue
         db = d / "duckdb"
@@ -105,11 +111,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-minutes", type=float, default=60)
     parser.add_argument("--max-minutes", type=float, default=120)
+    add_cohort_args(parser)
     args = parser.parse_args()
 
+    root = resolve_cohort_from_args(args).root
     sessions = []
-    usernames = build_usernames()
-    for d in sorted(ROOT.iterdir(), key=lambda p: int(p.name)):
+    usernames = build_usernames(root)
+    for d in sorted(root.iterdir(), key=lambda p: int(p.name)):
         if d.is_dir():
             sessions.append(
                 session_summary(d, usernames, args.min_minutes, args.max_minutes)
