@@ -1,0 +1,5 @@
+user,condition,n_total,median_latency_s,n_difficult,n_idk,n_agree_top1,n_agree_top2,pace_tertile
+LLM_User1,control,50,23.352,0,0,15,20,QUICK
+LLM_User1,treatment,50,30.866,0,0,48,50,QUICK
+LLM_User2,control,51,37.735,0,1,14,20,SLOW
+LLM_User2,treatment,51,59.59,0,1,37,44,SLOW

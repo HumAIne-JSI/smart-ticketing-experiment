@@ -473,6 +473,70 @@ def agreement_table(df):
     }
 
 
+def emit_persona_tables():
+    """Write analysis/persona_behavioral.csv from the labels view.
+
+    One row per user,condition (control/treatment) pooled over all
+    decisions_labels.csv rows (day-parts -d1/-d2 aggregated by their own
+    condition; no trim/block). IDK included in n_total and medians;
+    >10min capped null latencies excluded from the median; IDK counts as
+    non-agree. pace_tertile is assigned per condition from cohort tertiles
+    of median_latency_s (33rd/66th percentiles, linear): fastest third
+    QUICK, middle STEADY, slowest SLOW; null median -> null.
+    Cutoffs are cohort-specific (human vs llm runs separately).
+    """
+    dec = pd.read_csv(ANALYSIS / "decisions_labels.csv")
+    ses = pd.read_csv(ANALYSIS / "sessions_labels.csv")
+    user_of = dict(zip(ses["session_id"], ses["user"]))
+    dec["user"] = dec["session_id"].map(user_of)
+    missing = dec["user"].isna().sum()
+    if missing:
+        print(f"WARNING {missing} decisions without session user mapping; dropped")
+        dec = dec[dec["user"].notna()]
+    dec["latency_s"] = dec["latency_ms"] / 1000
+    dec["is_difficult"] = dec["is_difficult"].fillna(False).astype(bool)
+    dec["i_dont_know"] = dec["i_dont_know"].fillna(False).astype(bool)
+    agree1 = dec["label"] == dec["model_prediction"]
+    agree2 = agree1 | (dec["label"] == dec["second_model_prediction"])
+
+    rows = []
+    for (user, cond), g in dec.groupby(["user", "condition"]):
+        idx = g.index
+        rows.append({
+            "user": user,
+            "condition": cond,
+            "n_total": int(len(g)),
+            "median_latency_s": round(float(g["latency_s"].median(skipna=True)), 3)
+            if g["latency_s"].notna().any() else float("nan"),
+            "n_difficult": int(g["is_difficult"].sum()),
+            "n_idk": int(g["i_dont_know"].sum()),
+            "n_agree_top1": int(agree1.loc[idx].sum()),
+            "n_agree_top2": int(agree2.loc[idx].sum()),
+        })
+    table = pd.DataFrame(rows).sort_values(["user", "condition"])
+    cutoffs = {}
+    table["pace_tertile"] = None
+    for cond in ("control", "treatment"):
+        meds = table.loc[table["condition"] == cond, "median_latency_s"].dropna()
+        if not len(meds):
+            continue
+        q33 = float(meds.quantile(0.33))
+        q66 = float(meds.quantile(0.66))
+        cutoffs[cond] = (q33, q66)
+        print(f"pace cutoffs {cond}: q33={q33:.3f}s q66={q66:.3f}s (n={len(meds)})")
+        mask = table["condition"] == cond
+        vals = table.loc[mask, "median_latency_s"]
+        tert = pd.Series(None, index=table.loc[mask].index, dtype=object)
+        tert[vals <= q33] = "QUICK"
+        tert[(vals > q33) & (vals <= q66)] = "STEADY"
+        tert[vals > q66] = "SLOW"
+        table.loc[mask, "pace_tertile"] = tert.values
+    out_path = ANALYSIS / "persona_behavioral.csv"
+    table.to_csv(out_path, index=False)
+    print(f"persona_behavioral: {len(table)} user×condition rows -> {out_path}")
+    print(table.to_string(index=False))
+
+
 def section_f(scorable):
     start_section("F. Agreement with model")
     rows = []
@@ -790,6 +854,8 @@ def main():
     global ANALYSIS, FIGURES, REPORT, COHORT_LABEL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"])
+    parser.add_argument("--emit-persona-tables", action="store_true",
+                        help="write analysis/persona_behavioral.csv from decisions_labels.csv and exit")
     add_cohort_args(parser)
     args = parser.parse_args()
 
@@ -799,6 +865,11 @@ def main():
     REPORT = cohort.report
     COHORT_LABEL = cohort.label
     print(f"Cohort: {COHORT_LABEL} (input: {ANALYSIS}, report: {REPORT})")
+
+    if args.emit_persona_tables:
+        FIGURES.mkdir(parents=True, exist_ok=True)
+        emit_persona_tables()
+        return
 
     FIGURES.mkdir(parents=True, exist_ok=True)
     dec, sessions, scorable = load_data()
