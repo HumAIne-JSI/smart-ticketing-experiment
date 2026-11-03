@@ -41,29 +41,38 @@ SECTIONS = [
         ],
     },
     {
-        "title": "3. Fatigue macro F1",
-        "desc": "Macro F1 and latency across session thirds (equal-count label thirds in chronological order).",
+        "title": "3. Fatigue macro F1 (truncated sessions)",
+        "desc": "Macro F1 and latency across session thirds with each session "
+                "truncated to its first 50 scorable decisions (= training budget "
+                "120 incl. the 70 seed labels); thirds over the truncated sequence.",
         "images": [
-            ("human", HUMAN_FIG / "d_fatigue_f1.png",
-             "Human F1 and latency by session third."),
-            ("llm", LLM_FIG / "d_fatigue_f1.png",
-             "LLM F1 and latency by session third."),
+            ("human", HUMAN_FIG / "d_fatigue_f1_trim120.png",
+             "Human F1 and latency by session third (first 50 scorable per session)."),
+            ("llm", LLM_FIG / "d_fatigue_f1_trim120.png",
+             "LLM F1 and latency by session third (first 50 scorable per session)."),
         ],
     },
     {
-        "title": "4. LLM learning curves (section C)",
-        "desc": "Model test-F1 vs training labels; faint lines = instances, no pooled mean (<5 instances).",
+        "title": "4. LLM learning curves (section K, truncated)",
+        "desc": "Paired-users merged F1 panel truncated at 120 total training "
+                "labels (70 seed labels + 50 decisions); pooled mean uses only "
+                "users with both sessions present at each budget, dotted lines "
+                "= dropout (LLM sessions end at 120 by design).",
         "images": [
-            ("llm", LLM_FIG / "c_learning_curves.png",
-             "LLM active-learning loop only."),
+            ("llm", LLM_FIG / "k_paired_curves_trim120.png",
+             "LLM paired-users panel only; truncated at num_labeled <= 120 "
+             "(LLM sessions already end at that budget)."),
         ],
     },
     {
-        "title": "5. Human retention curve (section K)",
-        "desc": "Paired-users merged F1 panel; pooled mean uses only users with both sessions present at each budget, dotted lines = dropout.",
+        "title": "5. Human retention curve (section K, truncated)",
+        "desc": "Paired-users merged F1 panel truncated at 120 total training "
+                "labels (70 seed + 50 human decisions); pooled mean uses only "
+                "users with both sessions present at each budget, dotted lines "
+                "= dropout under the truncation.",
         "images": [
-            ("human", HUMAN_FIG / "k_paired_curves.png",
-             "Human paired-users panel only."),
+            ("human", HUMAN_FIG / "k_paired_curves_trim120.png",
+             "Human paired-users panel only, truncated at num_labeled <= 120."),
         ],
     },
 ]
