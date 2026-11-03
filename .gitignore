@@ -22,10 +22,8 @@ build/
 /.env
 /reports/
 
-# Raw per-participant experimental records (not for publication)
-analysis/decisions.csv
-analysis/sessions.csv
-analysis/al_metrics.csv
+# Raw per-participant experimental records and generated result CSVs (not for publication)
+analysis/*.csv
 /questionnaires/
 /personas/
 /prompts/
