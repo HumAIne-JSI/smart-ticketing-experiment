@@ -24,6 +24,8 @@ build/
 
 # Raw per-participant experimental records and generated result CSVs (not for publication)
 analysis/*.csv
+analysis/persona_comparison/*.csv
+analysis_llm/*.csv
 /questionnaires/
 /personas/
 /prompts/
