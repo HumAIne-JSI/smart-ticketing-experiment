@@ -644,7 +644,7 @@ def agreement_table(df):
     }
 
 
-def emit_persona_tables():
+def emit_persona_tables(first_n=None):
     """Write analysis/persona_behavioral.csv from the labels view.
 
     One row per user,condition (control/treatment) pooled over all
@@ -655,7 +655,14 @@ def emit_persona_tables():
     of median_latency_s (33rd/66th percentiles, linear): fastest third
     QUICK, middle STEADY, slowest SLOW; null median -> null.
     Cutoffs are cohort-specific (human vs llm runs separately).
+
+    With first_n (CLI --persona-first-n), only the first N decisions per
+    user,condition in labeled_at order enter the row statistics: N counts
+    all decisions including IDK, and users with fewer than N keep all.
+    The kept refs are printed to the terminal only (not persisted).
     """
+    if first_n is not None and first_n < 1:
+        raise SystemExit("--persona-first-n must be a positive integer")
     dec = pd.read_csv(ANALYSIS / "decisions_labels.csv")
     ses = pd.read_csv(ANALYSIS / "sessions_labels.csv")
     user_of = dict(zip(ses["session_id"], ses["user"]))
@@ -667,6 +674,20 @@ def emit_persona_tables():
     dec["latency_s"] = dec["latency_ms"] / 1000
     dec["is_difficult"] = dec["is_difficult"].fillna(False).astype(bool)
     dec["i_dont_know"] = dec["i_dont_know"].fillna(False).astype(bool)
+
+    if first_n is not None:
+        dec["_ts"] = pd.to_datetime(dec["labeled_at"], format="mixed", errors="coerce")
+        n0 = len(dec)
+        n_nat = int(dec["_ts"].isna().sum())
+        if n_nat:
+            print(f"WARNING {n_nat} decisions without parseable labeled_at; they sort last")
+        dec = dec.sort_values(["user", "condition", "_ts"], kind="stable")
+        dec = dec.groupby(["user", "condition"], sort=False).head(first_n)
+        print(f"persona first-N window: kept {len(dec)}/{n0} decisions "
+              f"(first {first_n} per user x condition, IDK counted)")
+        for (_u, _c), _g in dec.groupby(["user", "condition"], sort=False):
+            print(f"kept refs {_u} {_c} (n={len(_g)}): {', '.join(map(str, _g['ref']))}")
+
     agree1 = dec["label"] == dec["model_prediction"]
     agree2 = agree1 | (dec["label"] == dec["second_model_prediction"])
 
@@ -1685,6 +1706,10 @@ def main():
     parser.add_argument("--section", choices=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"])
     parser.add_argument("--emit-persona-tables", action="store_true",
                         help="write analysis/persona_behavioral.csv from decisions_labels.csv and exit")
+    parser.add_argument("--persona-first-n", type=int, default=None,
+                        help="keep only the first N decisions per (user, condition) in personas: "
+                             "labeled_at order; IDK counted in N, fewer than N keeps all; "
+                             "kept refs are printed to the terminal only")
     add_cohort_args(parser)
     args = parser.parse_args()
 
@@ -1697,7 +1722,7 @@ def main():
 
     if args.emit_persona_tables:
         FIGURES.mkdir(parents=True, exist_ok=True)
-        emit_persona_tables()
+        emit_persona_tables(first_n=args.persona_first_n)
         return
 
     FIGURES.mkdir(parents=True, exist_ok=True)
